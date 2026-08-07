@@ -26,6 +26,9 @@ public sealed class VoiceModeSelector : IDisposable
     private const string ExpressiveSubtitle =
         "Natural, context-aware emotion and intonation. Heavy on GPU. Stands alone.";
 
+    private const string DoubaoSubtitle =
+        "Cloud TTS by Volcengine. Natural Chinese/English voices, no local GPU. Needs an API key (set in Advanced).";
+
     private readonly IConfigWriter _configWriter;
     private readonly IAssetCatalog _catalog;
     private readonly IDisposable? _changeSubscription;
@@ -56,7 +59,7 @@ public sealed class VoiceModeSelector : IDisposable
     public void Render(float dt)
     {
         var activeMode = CurrentMode;
-        var cardWidth = (ImGui.GetContentRegionAvail().X - 12f) * 0.5f;
+        var cardWidth = (ImGui.GetContentRegionAvail().X - 24f) / 3f;
 
         // Clear (Kokoro) ships in every profile, so it never locks.
         RenderModeCard(
@@ -92,6 +95,19 @@ public sealed class VoiceModeSelector : IDisposable
                 cardWidth
             );
         }
+
+        ImGui.SameLine(0f, 12f);
+
+        // Doubao is a cloud API — no assets to gate on, but it needs credentials
+        // to actually speak. The card is always clickable; without a key the user
+        // lands in Doubao mode where the Advanced section can paste one.
+        RenderModeCard(
+            VoiceMode.Doubao,
+            "Doubao",
+            DoubaoSubtitle,
+            activeMode == VoiceMode.Doubao,
+            cardWidth
+        );
     }
 
     private void RenderModeCard(

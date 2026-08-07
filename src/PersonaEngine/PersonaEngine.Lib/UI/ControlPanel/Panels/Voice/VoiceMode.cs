@@ -11,6 +11,9 @@ public enum VoiceMode
 
     /// <summary>Qwen3 — context-aware emotion and intonation, heavy on GPU.</summary>
     Expressive,
+
+    /// <summary>Doubao — Volcengine cloud TTS, natural Chinese/English, needs an API key.</summary>
+    Doubao,
 }
 
 public static class VoiceModeMapping
@@ -19,6 +22,7 @@ public static class VoiceModeMapping
         engineId?.ToLowerInvariant() switch
         {
             "qwen3" => VoiceMode.Expressive,
+            "doubao" => VoiceMode.Doubao,
             _ => VoiceMode.Clear,
         };
 
@@ -26,6 +30,7 @@ public static class VoiceModeMapping
         mode switch
         {
             VoiceMode.Expressive => "qwen3",
+            VoiceMode.Doubao => "doubao",
             _ => "kokoro",
         };
 }

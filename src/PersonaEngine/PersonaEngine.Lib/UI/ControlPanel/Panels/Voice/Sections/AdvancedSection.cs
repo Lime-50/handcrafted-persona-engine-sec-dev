@@ -1,6 +1,7 @@
 using Hexa.NET.ImGui;
 using Microsoft.Extensions.Options;
 using PersonaEngine.Lib.Configuration;
+using PersonaEngine.Lib.UI.ControlPanel.Panels.Shared;
 
 namespace PersonaEngine.Lib.UI.ControlPanel.Panels.Voice.Sections;
 
@@ -17,9 +18,28 @@ public sealed class AdvancedSection : IDisposable
 
     private KokoroVoiceOptions _kokoro;
     private Qwen3TtsOptions _qwen3;
+    private DoubaoTtsOptions _doubao;
     private RVCFilterOptions _rvc;
     private readonly IDisposable? _ttsSubscription;
     private readonly IDisposable? _rvcSubscription;
+
+    private string _doubaoApiKeyBuffer = string.Empty;
+    private bool _doubaoShowKey;
+
+    private static readonly string[] DoubaoEmotions =
+    [
+        "None",
+        "happy",
+        "sad",
+        "angry",
+        "scare",
+        "surprise",
+        "sorry",
+        "pleased",
+        "tear",
+        "narrator",
+        "storytelling",
+    ];
 
     private AnimatedFloat _britishKnob;
     private AnimatedFloat _trimKnob;
@@ -41,13 +61,16 @@ public sealed class AdvancedSection : IDisposable
         var current = ttsOptions.CurrentValue;
         _kokoro = current.Kokoro;
         _qwen3 = current.Qwen3;
+        _doubao = current.Doubao;
         _rvc = rvcOptions.CurrentValue;
+        _doubaoApiKeyBuffer = current.Doubao.ApiKey;
 
         _ttsSubscription = ttsOptions.OnChange(
             (updated, _) =>
             {
                 _kokoro = updated.Kokoro;
                 _qwen3 = updated.Qwen3;
+                _doubao = updated.Doubao;
             }
         );
         _rvcSubscription = rvcOptions.OnChange((updated, _) => _rvc = updated);
@@ -89,10 +112,20 @@ public sealed class AdvancedSection : IDisposable
         ImGui.PopStyleColor();
         ImGui.Spacing();
 
-        if (mode == VoiceMode.Clear)
-            RenderKokoroSettings(dt);
-        else
-            RenderQwen3Settings(dt);
+        switch (mode)
+        {
+            case VoiceMode.Clear:
+                RenderKokoroSettings(dt);
+                break;
+
+            case VoiceMode.Expressive:
+                RenderQwen3Settings(dt);
+                break;
+
+            default:
+                RenderDoubaoSettings(dt);
+                break;
+        }
 
         RenderRvcSettings();
 
@@ -287,6 +320,102 @@ public sealed class AdvancedSection : IDisposable
     }
 
     // ── RVC (both modes) ────────────────────────────────────────────────────
+
+    private void RenderDoubaoSettings(float dt)
+    {
+        float rowY;
+
+        // API key — the one thing that gates the whole cloud engine.
+        rowY = ImGui.GetCursorPosY();
+        ImGuiHelpers.SettingLabel(
+            "API Key",
+            "Volcengine Doubao speech API key (new console), or AppId + AccessKey (legacy)."
+        );
+        ApiKeyRow.Render(
+            "##doubao_api_key",
+            ref _doubaoApiKeyBuffer,
+            ref _doubaoShowKey,
+            _doubao.Endpoint,
+            out var nextKey
+        );
+        if (nextKey is not null)
+        {
+            _doubao = _doubao with { ApiKey = nextKey };
+            _configWriter.Write(_doubao);
+        }
+        ImGuiHelpers.SettingEndRow(rowY);
+
+        // Speech rate
+        rowY = ImGui.GetCursorPosY();
+        var speechRate = _doubao.SpeechRate;
+        ImGuiHelpers.SettingLabel(
+            "Speech Rate",
+            "Pace adjustment (-50 = half speed, 0 = default, 100 = double speed)."
+        );
+        if (
+            ImGuiHelpers.LabeledSlider(
+                "##doubao_speech_rate",
+                ref speechRate,
+                -50,
+                100,
+                "Slow",
+                "Fast",
+                dt
+            )
+        )
+        {
+            _doubao = _doubao with { SpeechRate = speechRate };
+            _configWriter.Write(_doubao);
+        }
+        ImGuiHelpers.SettingEndRow(rowY);
+
+        // Loudness
+        rowY = ImGui.GetCursorPosY();
+        var loudness = _doubao.LoudnessRate;
+        ImGuiHelpers.SettingLabel(
+            "Loudness",
+            "Volume adjustment (-50 = half volume, 0 = default, 100 = double volume)."
+        );
+        if (
+            ImGuiHelpers.LabeledSlider(
+                "##doubao_loudness",
+                ref loudness,
+                -50,
+                100,
+                "Quiet",
+                "Loud",
+                dt
+            )
+        )
+        {
+            _doubao = _doubao with { LoudnessRate = loudness };
+            _configWriter.Write(_doubao);
+        }
+        ImGuiHelpers.SettingEndRow(rowY);
+
+        // Emotion
+        rowY = ImGui.GetCursorPosY();
+        var currentEmotion = _doubao.Emotion;
+        var emotionIndex = currentEmotion is null
+            ? 0
+            : Array.IndexOf(DoubaoEmotions, currentEmotion);
+        if (emotionIndex < 0)
+        {
+            emotionIndex = 0;
+        }
+
+        ImGuiHelpers.SettingLabel("Emotion", "Emotional tone (only supported by some voices).");
+        if (ImGui.Combo("##doubao_emotion", ref emotionIndex, DoubaoEmotions, DoubaoEmotions.Length))
+        {
+            _doubao = _doubao with
+            {
+                Emotion = emotionIndex == 0 ? null : DoubaoEmotions[emotionIndex],
+            };
+            _configWriter.Write(_doubao);
+        }
+        ImGuiHelpers.HandCursorOnHover();
+        ImGuiHelpers.SettingEndRow(rowY);
+    }
 
     private void RenderRvcSettings()
     {

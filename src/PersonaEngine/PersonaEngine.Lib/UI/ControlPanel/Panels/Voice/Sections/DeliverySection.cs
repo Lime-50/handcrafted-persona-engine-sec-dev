@@ -22,6 +22,7 @@ public sealed class DeliverySection : IDisposable
 
     private KokoroVoiceOptions _kokoro;
     private Qwen3TtsOptions _qwen3;
+    private DoubaoTtsOptions _doubao;
     private readonly IDisposable? _changeSubscription;
 
     public DeliverySection(IOptionsMonitor<TtsConfiguration> ttsOptions, IConfigWriter configWriter)
@@ -32,6 +33,7 @@ public sealed class DeliverySection : IDisposable
         var current = ttsOptions.CurrentValue;
         _kokoro = current.Kokoro;
         _qwen3 = current.Qwen3;
+        _doubao = current.Doubao;
 
         // Refresh the local cache when the config file changes externally (e.g. manual edit).
         _changeSubscription = ttsOptions.OnChange(
@@ -39,6 +41,7 @@ public sealed class DeliverySection : IDisposable
             {
                 _kokoro = updated.Kokoro;
                 _qwen3 = updated.Qwen3;
+                _doubao = updated.Doubao;
             }
         );
     }
@@ -51,19 +54,32 @@ public sealed class DeliverySection : IDisposable
 
         float rowY;
 
-        // Pace
-        rowY = Hexa.NET.ImGui.ImGui.GetCursorPosY();
-        var speed = _kokoro.DefaultSpeed;
-        if (ImGuiHelpers.LabeledSlider("##pace", ref speed, 0.5f, 2.0f, "Slow", "Fast", "%.2f", dt))
+        if (mode == VoiceMode.Clear)
         {
-            _kokoro = _kokoro with { DefaultSpeed = speed };
-            _configWriter.Write(_kokoro);
+            // Pace (Kokoro)
+            rowY = Hexa.NET.ImGui.ImGui.GetCursorPosY();
+            var speed = _kokoro.DefaultSpeed;
+            if (
+                ImGuiHelpers.LabeledSlider(
+                    "##pace",
+                    ref speed,
+                    0.5f,
+                    2.0f,
+                    "Slow",
+                    "Fast",
+                    "%.2f",
+                    dt
+                )
+            )
+            {
+                _kokoro = _kokoro with { DefaultSpeed = speed };
+                _configWriter.Write(_kokoro);
+            }
+            ImGuiHelpers.SettingEndRow(rowY);
         }
-        ImGuiHelpers.SettingEndRow(rowY);
-
-        // Expressiveness — only visible in Expressive mode
-        if (mode == VoiceMode.Expressive)
+        else if (mode == VoiceMode.Expressive)
         {
+            // Expressiveness (Qwen3)
             rowY = Hexa.NET.ImGui.ImGui.GetCursorPosY();
             var temperature = _qwen3.Temperature;
             if (
@@ -81,6 +97,28 @@ public sealed class DeliverySection : IDisposable
             {
                 _qwen3 = _qwen3 with { Temperature = temperature };
                 _configWriter.Write(_qwen3);
+            }
+            ImGuiHelpers.SettingEndRow(rowY);
+        }
+        else
+        {
+            // Speech rate (Doubao cloud TTS)
+            rowY = Hexa.NET.ImGui.ImGui.GetCursorPosY();
+            var speechRate = _doubao.SpeechRate;
+            if (
+                ImGuiHelpers.LabeledSlider(
+                    "##doubao_speech_rate",
+                    ref speechRate,
+                    -50,
+                    100,
+                    "Slow",
+                    "Fast",
+                    dt
+                )
+            )
+            {
+                _doubao = _doubao with { SpeechRate = speechRate };
+                _configWriter.Write(_doubao);
             }
             ImGuiHelpers.SettingEndRow(rowY);
         }

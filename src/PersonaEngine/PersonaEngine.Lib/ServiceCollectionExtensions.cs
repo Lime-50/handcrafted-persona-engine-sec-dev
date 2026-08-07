@@ -39,6 +39,7 @@ using PersonaEngine.Lib.TTS.RVC;
 using PersonaEngine.Lib.TTS.Synthesis;
 using PersonaEngine.Lib.TTS.Synthesis.Alignment;
 using PersonaEngine.Lib.TTS.Synthesis.Audio;
+using PersonaEngine.Lib.TTS.Synthesis.Doubao;
 using PersonaEngine.Lib.TTS.Synthesis.Engine;
 using PersonaEngine.Lib.TTS.Synthesis.Kokoro;
 using PersonaEngine.Lib.TTS.Synthesis.LipSync;
@@ -427,6 +428,16 @@ public static class ServiceCollectionExtensions
 
         // Runtime engine switching
         services.AddSingleton<ITtsEngineProvider, TtsEngineProvider>();
+
+        // Doubao cloud TTS (Volcengine). No model assets required — always
+        // registered; configuration supplies the API key and voice.
+        services.Configure<DoubaoTtsOptions>(configuration.GetSection("Config:Tts:Doubao"));
+        services.AddHttpClient(
+            DoubaoApiClient.HttpClientName,
+            c => c.Timeout = TimeSpan.FromSeconds(60)
+        );
+        services.AddSingleton<DoubaoApiClient>();
+        services.AddSingleton<ISentenceSynthesizer, DoubaoSentenceSynthesizer>();
 
         // Top-level orchestrator (replaces TtsEngine)
         services.AddSingleton<ITtsEngine, TtsOrchestrator>();

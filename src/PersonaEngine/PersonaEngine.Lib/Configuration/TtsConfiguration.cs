@@ -22,6 +22,8 @@ public record TtsConfiguration
     public RVCFilterOptions Rvc { get; init; } = new();
 
     public Qwen3TtsOptions Qwen3 { get; init; } = new();
+
+    public DoubaoTtsOptions Doubao { get; init; } = new();
 }
 
 public record KokoroVoiceOptions

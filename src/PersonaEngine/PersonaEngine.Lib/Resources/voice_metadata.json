@@ -160,6 +160,62 @@
       "displayName": "Kasumi VA",
       "gender": "female",
       "description": "Voice-clone with Kasumi vocal characteristics."
+    },
+    {
+      "engine": "doubao",
+      "id": "zh_female_shuangkuaisisi_uranus_bigtts",
+      "displayName": "Shuangkuai Sisi 2.0",
+      "gender": "female",
+      "description": "Doubao TTS 2.0 general Chinese voice."
+    },
+    {
+      "engine": "doubao",
+      "id": "zh_female_cancan_uranus_bigtts",
+      "displayName": "Cancan 2.0",
+      "gender": "female",
+      "description": "Doubao TTS 2.0 role-play Chinese voice."
+    },
+    {
+      "engine": "doubao",
+      "id": "zh_female_tianmeixiaoyuan_uranus_bigtts",
+      "displayName": "Tianmei Xiaoyuan 2.0",
+      "gender": "female",
+      "description": "Doubao TTS 2.0 sweet Chinese voice."
+    },
+    {
+      "engine": "doubao",
+      "id": "zh_female_xiaohe_uranus_bigtts",
+      "displayName": "Xiaohe 2.0",
+      "gender": "female",
+      "description": "Doubao TTS 2.0 clear Chinese voice."
+    },
+    {
+      "engine": "doubao",
+      "id": "zh_male_m191_uranus_bigtts",
+      "displayName": "Yunzhou 2.0",
+      "gender": "male",
+      "description": "Doubao TTS 2.0 general Chinese male voice."
+    },
+    {
+      "engine": "doubao",
+      "id": "zh_male_taocheng_uranus_bigtts",
+      "displayName": "Xiaotian 2.0",
+      "gender": "male",
+      "description": "Doubao TTS 2.0 relaxed Chinese male voice."
+    },
+    {
+      "engine": "doubao",
+      "id": "en_female_dacey_uranus_bigtts",
+      "displayName": "Dacey",
+      "gender": "female",
+      "description": "Doubao TTS 2.0 multilingual English voice."
+    },
+    {
+      "engine": "doubao",
+      "id": "en_male_tim_uranus_bigtts",
+      "displayName": "Tim",
+      "gender": "male",
+      "description": "Doubao TTS 2.0 multilingual English male voice."
     }
   ]
 }

@@ -4,6 +4,7 @@ public enum VoiceEngine
 {
     Kokoro,
     Qwen3,
+    Doubao,
     Rvc,
 }
 

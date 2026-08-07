@@ -9,4 +9,5 @@ public sealed record AuditionSampleOptions
 {
     public string Kokoro { get; init; } = "Hello there — I'm your new companion.";
     public string Qwen3 { get; init; } = "Hello there — I'm your new companion.";
+    public string Doubao { get; init; } = "Hello there — I'm your new companion.";
 }

@@ -135,6 +135,7 @@ public sealed class VoiceAuditionService(
         engineId.ToLowerInvariant() switch
         {
             "qwen3" => ttsOptions.CurrentValue.AuditionSample.Qwen3,
+            "doubao" => ttsOptions.CurrentValue.AuditionSample.Doubao,
             _ => ttsOptions.CurrentValue.AuditionSample.Kokoro,
         };
 

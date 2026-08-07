@@ -89,10 +89,12 @@ public sealed class CloneLayerSection : IDisposable
             _knobInitialized = true;
         }
         var defaultOpen = false;
-        var hint =
-            mode == VoiceMode.Clear
-                ? "Recommended \u2014 gives Kokoro character."
-                : "Rarely needed \u2014 Qwen3 reads emotion from context.";
+        var hint = mode switch
+        {
+            VoiceMode.Clear => "Recommended \u2014 gives Kokoro character.",
+            VoiceMode.Expressive => "Rarely needed \u2014 Qwen3 reads emotion from context.",
+            _ => "Optional \u2014 works on top of cloud voices too.",
+        };
 
         _bodyDt = dt;
         _bodyMode = mode;
@@ -217,7 +219,12 @@ public sealed class CloneLayerSection : IDisposable
     {
         var engineId = VoiceModeMapping.ToEngineId(mode);
         var tts = _ttsOptions.CurrentValue;
-        var voice = mode == VoiceMode.Clear ? tts.Kokoro.DefaultVoice : tts.Qwen3.Speaker;
+        var voice = mode switch
+        {
+            VoiceMode.Clear => tts.Kokoro.DefaultVoice,
+            VoiceMode.Expressive => tts.Qwen3.Speaker,
+            _ => tts.Doubao.DefaultVoice,
+        };
         float? expressiveness = mode == VoiceMode.Expressive ? tts.Qwen3.Temperature : null;
 
         return new VoiceAuditionRequest

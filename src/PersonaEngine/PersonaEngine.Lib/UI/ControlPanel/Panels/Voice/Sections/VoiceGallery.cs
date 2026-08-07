@@ -31,6 +31,7 @@ public sealed class VoiceGallery : IDisposable
 
     private KokoroVoiceOptions _kokoro;
     private Qwen3TtsOptions _qwen3;
+    private DoubaoTtsOptions _doubao;
     private readonly IDisposable? _changeSubscription;
 
     private VoiceGender? _genderFilter;
@@ -66,12 +67,14 @@ public sealed class VoiceGallery : IDisposable
         var current = ttsOptions.CurrentValue;
         _kokoro = current.Kokoro;
         _qwen3 = current.Qwen3;
+        _doubao = current.Doubao;
 
         _changeSubscription = ttsOptions.OnChange(
             (updated, _) =>
             {
                 _kokoro = updated.Kokoro;
                 _qwen3 = updated.Qwen3;
+                _doubao = updated.Doubao;
             }
         );
     }
@@ -96,7 +99,22 @@ public sealed class VoiceGallery : IDisposable
             return;
         }
 
-        var engine = mode == VoiceMode.Clear ? VoiceEngine.Kokoro : VoiceEngine.Qwen3;
+        if (mode == VoiceMode.Doubao && !HasDoubaoCredentials)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, Theme.TextTertiary);
+            ImGui.TextUnformatted(
+                "Doubao voices are available after adding an API key in Advanced settings."
+            );
+            ImGui.PopStyleColor();
+            return;
+        }
+
+        var engine = mode switch
+        {
+            VoiceMode.Clear => VoiceEngine.Kokoro,
+            VoiceMode.Expressive => VoiceEngine.Qwen3,
+            _ => VoiceEngine.Doubao,
+        };
 
         RenderFilters();
 
@@ -201,19 +219,31 @@ public sealed class VoiceGallery : IDisposable
     }
 
     private string GetCurrentVoice(VoiceMode mode) =>
-        mode == VoiceMode.Clear ? _kokoro.DefaultVoice : _qwen3.Speaker;
+        mode switch
+        {
+            VoiceMode.Clear => _kokoro.DefaultVoice,
+            VoiceMode.Expressive => _qwen3.Speaker,
+            _ => _doubao.DefaultVoice,
+        };
 
     private void SelectVoice(VoiceMode mode, string voiceId)
     {
-        if (mode == VoiceMode.Clear)
+        switch (mode)
         {
-            _kokoro = _kokoro with { DefaultVoice = voiceId };
-            _configWriter.Write(_kokoro);
-        }
-        else
-        {
-            _qwen3 = _qwen3 with { Speaker = voiceId };
-            _configWriter.Write(_qwen3);
+            case VoiceMode.Clear:
+                _kokoro = _kokoro with { DefaultVoice = voiceId };
+                _configWriter.Write(_kokoro);
+                break;
+
+            case VoiceMode.Expressive:
+                _qwen3 = _qwen3 with { Speaker = voiceId };
+                _configWriter.Write(_qwen3);
+                break;
+
+            default:
+                _doubao = _doubao with { DefaultVoice = voiceId };
+                _configWriter.Write(_doubao);
+                break;
         }
     }
 
@@ -221,9 +251,11 @@ public sealed class VoiceGallery : IDisposable
         VoiceMode mode,
         string voiceId,
         string previewId
-    ) =>
-        mode == VoiceMode.Clear
-            ? new VoiceAuditionRequest
+    )
+    {
+        if (mode == VoiceMode.Clear)
+        {
+            return new VoiceAuditionRequest
             {
                 Id = previewId,
                 Engine = "kokoro",
@@ -232,12 +264,38 @@ public sealed class VoiceGallery : IDisposable
                 RvcEnabled = _rvcOptions.CurrentValue.Enabled,
                 RvcVoice = _rvcOptions.CurrentValue.DefaultVoice,
                 RvcPitchShift = _rvcOptions.CurrentValue.F0UpKey,
-            }
-            : new VoiceAuditionRequest
+            };
+        }
+
+        if (mode == VoiceMode.Expressive)
+        {
+            return new VoiceAuditionRequest
             {
                 Id = previewId,
                 Engine = "qwen3",
                 Voice = voiceId,
                 Expressiveness = _ttsOptions.CurrentValue.Qwen3.Temperature,
             };
+        }
+
+        return new VoiceAuditionRequest
+        {
+            Id = previewId,
+            Engine = "doubao",
+            Voice = voiceId,
+        };
+    }
+
+    private bool HasDoubaoCredentials
+    {
+        get
+        {
+            var options = _ttsOptions.CurrentValue.Doubao;
+            return !string.IsNullOrWhiteSpace(options.ApiKey)
+                || (
+                    !string.IsNullOrWhiteSpace(options.AppId)
+                    && !string.IsNullOrWhiteSpace(options.AccessKey)
+                );
+        }
+    }
 }

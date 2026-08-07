@@ -37,10 +37,12 @@ public sealed class VoiceCard(
                 ImGui.ColorConvertFloat4ToU32(Theme.AccentPrimary with { W = 0.06f })
             );
 
-            var (voiceId, engine) =
-                mode == VoiceMode.Clear
-                    ? (ttsOptions.CurrentValue.Kokoro.DefaultVoice, VoiceEngine.Kokoro)
-                    : (ttsOptions.CurrentValue.Qwen3.Speaker, VoiceEngine.Qwen3);
+            var (voiceId, engine) = mode switch
+            {
+                VoiceMode.Clear => (ttsOptions.CurrentValue.Kokoro.DefaultVoice, VoiceEngine.Kokoro),
+                VoiceMode.Expressive => (ttsOptions.CurrentValue.Qwen3.Speaker, VoiceEngine.Qwen3),
+                _ => (ttsOptions.CurrentValue.Doubao.DefaultVoice, VoiceEngine.Doubao),
+            };
 
             var descriptor = catalog.Resolve(engine, voiceId);
 
@@ -96,9 +98,11 @@ public sealed class VoiceCard(
         }
     }
 
-    private VoiceAuditionRequest BuildRequest(VoiceMode mode) =>
-        mode == VoiceMode.Clear
-            ? new VoiceAuditionRequest
+    private VoiceAuditionRequest BuildRequest(VoiceMode mode)
+    {
+        if (mode == VoiceMode.Clear)
+        {
+            return new VoiceAuditionRequest
             {
                 Id = PreviewId,
                 Engine = "kokoro",
@@ -107,12 +111,25 @@ public sealed class VoiceCard(
                 RvcEnabled = rvcOptions.CurrentValue.Enabled,
                 RvcVoice = rvcOptions.CurrentValue.DefaultVoice,
                 RvcPitchShift = rvcOptions.CurrentValue.F0UpKey,
-            }
-            : new VoiceAuditionRequest
+            };
+        }
+
+        if (mode == VoiceMode.Expressive)
+        {
+            return new VoiceAuditionRequest
             {
                 Id = PreviewId,
                 Engine = "qwen3",
                 Voice = ttsOptions.CurrentValue.Qwen3.Speaker,
                 Expressiveness = ttsOptions.CurrentValue.Qwen3.Temperature,
             };
+        }
+
+        return new VoiceAuditionRequest
+        {
+            Id = PreviewId,
+            Engine = "doubao",
+            Voice = ttsOptions.CurrentValue.Doubao.DefaultVoice,
+        };
+    }
 }
