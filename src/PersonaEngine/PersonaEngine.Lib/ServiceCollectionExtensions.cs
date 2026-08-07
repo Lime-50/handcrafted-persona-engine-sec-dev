@@ -1,7 +1,6 @@
 #pragma warning disable SKEXP0001
 
 using System.Diagnostics.CodeAnalysis;
-using System.Globalization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -214,17 +213,13 @@ public static class ServiceCollectionExtensions
         var hasTurbo = catalog.IsFeatureEnabled(FeatureIds.AsrAccurate);
         services.AddSingleton<IRealtimeSpeechTranscriptor>(sp =>
         {
-            var asrOptions = sp.GetRequiredService<IOptions<AsrConfiguration>>().Value;
+            var asrOptions = sp.GetRequiredService<IOptionsMonitor<AsrConfiguration>>();
 
             var realtimeSpeechTranscriptorOptions = new RealtimeSpeechTranscriptorOptions
             {
                 AutodetectLanguageOnce = false,
                 IncludeSpeechRecogizingEvents = false,
                 RetrieveTokenDetails = false,
-                LanguageAutoDetect = false,
-                Language = new CultureInfo("en-US"),
-                Prompt = asrOptions.TtsPrompt,
-                Template = asrOptions.TtsMode,
             };
 
             var realTimeOptions = new RealtimeOptions();
@@ -246,6 +241,7 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<IVadDetector>(),
                 bargeIn,
                 realtimeSpeechTranscriptorOptions,
+                asrOptions,
                 realTimeOptions,
                 sp.GetRequiredService<ILogger<RealtimeTranscriptor>>()
             );

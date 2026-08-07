@@ -8,6 +8,19 @@ public record AsrConfiguration
 
     public string TtsPrompt { get; init; } = string.Empty;
 
+    /// <summary>
+    ///     Culture name fed to Whisper when <see cref="LanguageAutoDetect" /> is false
+    ///     (e.g. "en-US", "zh-CN", "yue", "ja-JP"). Bound to "Config:Asr:Language".
+    /// </summary>
+    public string Language { get; init; } = "en-US";
+
+    /// <summary>
+    ///     When true, Whisper auto-detects the language of each utterance instead of
+    ///     using <see cref="Language" />. Auto-detect requires a multilingual Whisper
+    ///     model; the default Tiny EN model only transcribes English.
+    /// </summary>
+    public bool LanguageAutoDetect { get; init; } = false;
+
     public float VadThreshold { get; init; } = 0.5f;
 
     public float VadThresholdGap { get; init; } = 0.15f;

@@ -1,14 +1,17 @@
+using System.Globalization;
 using System.Numerics;
 using Hexa.NET.ImGui;
 using Microsoft.Extensions.Options;
+using PersonaEngine.Lib.Assets;
 using PersonaEngine.Lib.Configuration;
 using PersonaEngine.Lib.UI.ControlPanel.Layout;
 
 namespace PersonaEngine.Lib.UI.ControlPanel.Panels.Listening.Sections;
 
 /// <summary>
-///     Recognition card: Whisper decoder preset (Fast/Balanced/Accurate) + a chip-based
-///     Custom Vocabulary editor backed by <see cref="AsrConfiguration.TtsPrompt" />.
+///     Recognition card: spoken-language picker, Whisper decoder preset
+///     (Fast/Balanced/Accurate), and a chip-based Custom Vocabulary editor backed by
+///     <see cref="AsrConfiguration.TtsPrompt" />.
 /// </summary>
 public sealed class RecognitionSection : IDisposable
 {
@@ -29,11 +32,40 @@ public sealed class RecognitionSection : IDisposable
     };
 
     private readonly IConfigWriter _configWriter;
+    private readonly IAssetCatalog _catalog;
     private readonly IDisposable? _changeSubscription;
 
     // Pre-built "##vocab_{i}" ids up to MaxVocabulary so the per-chip
     // InvisibleButton doesn't interpolate a fresh string every frame.
     private static readonly string[] VocabChipIds = BuildVocabChipIds();
+
+    private readonly record struct LanguageOption(string DisplayName, string? CultureName)
+    {
+        public bool IsAuto => CultureName is null;
+    }
+
+    // Curated subset of WhisperNetSupportedLanguage. ASCII labels keep the combo
+    // readable with the default ImGui font (no CJK glyphs).
+    private static readonly LanguageOption[] LanguageOptions =
+    [
+        new("Auto detect", null),
+        new("English (US)", "en-US"),
+        new("Chinese (Simplified)", "zh-CN"),
+        new("Chinese (Cantonese)", "yue"),
+        new("Japanese", "ja-JP"),
+        new("Korean", "ko-KR"),
+        new("Spanish", "es-ES"),
+        new("French", "fr-FR"),
+        new("German", "de-DE"),
+        new("Russian", "ru-RU"),
+        new("Portuguese (Brazil)", "pt-BR"),
+        new("Italian", "it-IT"),
+        new("Thai", "th-TH"),
+        new("Vietnamese", "vi-VN"),
+        new("Indonesian", "id-ID"),
+        new("Hindi", "hi-IN"),
+        new("Arabic", "ar-SA"),
+    ];
 
     private AsrConfiguration _asr;
     private string _inputBuffer = string.Empty;
@@ -49,9 +81,14 @@ public sealed class RecognitionSection : IDisposable
         return ids;
     }
 
-    public RecognitionSection(IOptionsMonitor<AsrConfiguration> monitor, IConfigWriter configWriter)
+    public RecognitionSection(
+        IOptionsMonitor<AsrConfiguration> monitor,
+        IConfigWriter configWriter,
+        IAssetCatalog catalog
+    )
     {
         _configWriter = configWriter;
+        _catalog = catalog;
         _asr = monitor.CurrentValue;
         _vocabulary = ParseVocabulary(_asr.TtsPrompt);
         _changeSubscription = monitor.OnChange(
@@ -70,6 +107,8 @@ public sealed class RecognitionSection : IDisposable
         using (Ui.Card("##recognition", padding: 12f))
         {
             RenderHeader();
+            RenderLanguage();
+            ImGui.Spacing();
             RenderQuality();
             ImGui.Spacing();
             RenderVocabulary();
@@ -88,6 +127,107 @@ public sealed class RecognitionSection : IDisposable
 
         ImGui.Spacing();
     }
+
+    private void RenderLanguage()
+    {
+        ImGuiHelpers.SettingLabel(
+            "Language",
+            "What the avatar listens for. Auto detect lets Whisper decide per utterance; "
+                + "a fixed language is more consistent."
+        );
+
+        var preview = _asr.LanguageAutoDetect
+            ? LanguageOptions[0].DisplayName
+            : GetLanguageDisplayName(_asr.Language);
+
+        if (ImGui.BeginCombo("##asr_language", preview))
+        {
+            foreach (var option in LanguageOptions)
+            {
+                var isSelected = option.IsAuto
+                    ? _asr.LanguageAutoDetect
+                    : !_asr.LanguageAutoDetect
+                        && string.Equals(
+                            option.CultureName,
+                            _asr.Language,
+                            StringComparison.OrdinalIgnoreCase
+                        );
+
+                if (ImGui.Selectable(option.DisplayName, isSelected))
+                {
+                    var updated = option.IsAuto
+                        ? _asr with { LanguageAutoDetect = true }
+                        : _asr with { Language = option.CultureName!, LanguageAutoDetect = false };
+
+                    if (updated != _asr)
+                    {
+                        _asr = updated;
+                        _configWriter.Write(_asr);
+                    }
+                }
+            }
+
+            ImGui.EndCombo();
+        }
+
+        ImGuiHelpers.HandCursorOnHover();
+        RenderLanguageModelWarning();
+    }
+
+    private void RenderLanguageModelWarning()
+    {
+        // The default profile ships Whisper Tiny EN, which only transcribes English.
+        // Auto-detect is useless on it too: Whisper still forces English output.
+        if (_catalog.IsFeatureEnabled(FeatureIds.AsrAccurate))
+        {
+            return;
+        }
+
+        var needsMultilingual = _asr.LanguageAutoDetect || !IsEnglishOnlyCulture(_asr.Language);
+        if (!needsMultilingual)
+        {
+            return;
+        }
+
+        ImGui.PushStyleColor(ImGuiCol.Text, Theme.Warning);
+        ImGui.TextWrapped(
+            "The installed Whisper model is English-only (Tiny EN). Install the BuildWithIt "
+                + "profile to download the multilingual Whisper Turbo model, otherwise this "
+                + "language won't transcribe correctly."
+        );
+        ImGui.PopStyleColor();
+    }
+
+    private static string GetLanguageDisplayName(string cultureName)
+    {
+        foreach (var option in LanguageOptions)
+        {
+            if (
+                option.CultureName is not null
+                && string.Equals(
+                    option.CultureName,
+                    cultureName,
+                    StringComparison.OrdinalIgnoreCase
+                )
+            )
+            {
+                return option.DisplayName;
+            }
+        }
+
+        try
+        {
+            return CultureInfo.GetCultureInfo(cultureName).EnglishName;
+        }
+        catch (CultureNotFoundException)
+        {
+            return cultureName;
+        }
+    }
+
+    private static bool IsEnglishOnlyCulture(string cultureName) =>
+        string.Equals(cultureName, "en-US", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(cultureName, "en-GB", StringComparison.OrdinalIgnoreCase);
 
     private void RenderQuality()
     {

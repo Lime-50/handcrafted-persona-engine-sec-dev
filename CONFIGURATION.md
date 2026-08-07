@@ -103,6 +103,8 @@ Automatic speech recognition (Whisper). Live-editable from the **Listening** pan
 |---|---|---|---|
 | `TtsMode` | int | `0` | Whisper decoder preset. `0` = Performant (fast), `1` = Balanced, `2` = Precise (most accurate — needs the Turbo model from the Build-with-it profile). Exposed in the UI as the **Fast / Balanced / Accurate** chips. |
 | `TtsPrompt` | string | `"Aria, Joobel"` | Optional initial prompt fed to Whisper to bias recognition toward specific names or terms. |
+| `Language` | string | `"en-US"` | Culture name fed to Whisper when auto-detect is off, e.g. `"zh-CN"`, `"yue"`, `"ja-JP"`. Picker available in the **Listening** panel. Multilingual recognition requires the Turbo model from the Build-with-it profile — the default Tiny EN model only transcribes English. |
+| `LanguageAutoDetect` | bool | `false` | When `true`, Whisper auto-detects the language of each utterance instead of using `Language`. Also requires a multilingual model. |
 | `VadThreshold` | float | `0.5` | Silero VAD speech-probability threshold. Higher = stricter (requires a louder signal to be considered speech). Range `0.0–1.0`. |
 | `VadThresholdGap` | float | `0.15` | Negative threshold (`VadThreshold − VadThresholdGap`). Speech detection continues while the probability stays above the negative threshold, avoiding mid-sentence cutoffs. |
 | `VadMinSpeechDuration` | int (ms) | `150` | Minimum duration of audio above threshold that counts as a speech segment. Shorter bursts are ignored as noise. |
