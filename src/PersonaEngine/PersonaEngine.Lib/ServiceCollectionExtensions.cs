@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.SemanticKernel;
 using PersonaEngine.Lib.ASR.Transcriber;
+using PersonaEngine.Lib.ASR.Transcriber.Doubao;
 using PersonaEngine.Lib.ASR.VAD;
 using PersonaEngine.Lib.Assets;
 using PersonaEngine.Lib.Assets.Manifest;
@@ -211,7 +212,7 @@ public static class ServiceCollectionExtensions
         // Loading the Turbo factory unconditionally crashes DI build for non-Build profiles
         // because the .bin isn't present.
         var hasTurbo = catalog.IsFeatureEnabled(FeatureIds.AsrAccurate);
-        services.AddSingleton<IRealtimeSpeechTranscriptor>(sp =>
+        services.AddSingleton<RealtimeTranscriptor>(sp =>
         {
             var asrOptions = sp.GetRequiredService<IOptionsMonitor<AsrConfiguration>>();
 
@@ -246,6 +247,16 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<ILogger<RealtimeTranscriptor>>()
             );
         });
+
+        services.AddSingleton<DoubaoRealtimeSpeechTranscriptor>();
+        services.AddSingleton<IDoubaoConnectionProbe, DoubaoConnectionProbe>();
+        services.AddSingleton<IRealtimeSpeechTranscriptor>(sp =>
+            new SelectingRealtimeTranscriptor(
+                sp.GetRequiredService<IOptionsMonitor<AsrConfiguration>>(),
+                sp.GetRequiredService<RealtimeTranscriptor>(),
+                sp.GetRequiredService<DoubaoRealtimeSpeechTranscriptor>()
+            )
+        );
 
         services.AddSingleton<IMicrophone, MicrophoneInputNAudioSource>();
         services.AddSingleton<IAwaitableAudioSource>(sp => sp.GetRequiredService<IMicrophone>());
