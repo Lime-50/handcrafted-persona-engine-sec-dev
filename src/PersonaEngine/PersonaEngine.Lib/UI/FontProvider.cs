@@ -99,10 +99,51 @@ public class FontProvider : IStartupTask
             fontSystem = new FontSystem();
             var fontData = File.ReadAllBytes(Path.Combine(FONTS_DIR, fontName));
             fontSystem.AddFont(fontData);
+
+            AddCjkFallback(fontSystem, fontName);
+
             _fontCache[fontName] = fontSystem;
         }
 
         return fontSystem;
+    }
+
+    /// <summary>
+    ///     Adds a CJK-capable font to the same <see cref="FontSystem" /> so glyphs the
+    ///     primary font lacks (Chinese, Japanese, Korean) fall back to it instead of
+    ///     rendering as '?'. FontStashSharp resolves glyphs across all added fonts.
+    /// </summary>
+    private void AddCjkFallback(FontSystem fontSystem, string primaryFontName)
+    {
+        var cjkPath = CjkFontResolver.TryResolve(allowTtc: false);
+        if (cjkPath is null)
+        {
+            _logger.LogDebug(
+                "No CJK fallback font found; non-Latin glyphs in '{Font}' may render as '?'",
+                primaryFontName
+            );
+
+            return;
+        }
+
+        try
+        {
+            fontSystem.AddFont(File.ReadAllBytes(cjkPath));
+            _logger.LogDebug(
+                "Added CJK fallback font '{Path}' to '{Font}'",
+                cjkPath,
+                primaryFontName
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to load CJK fallback font '{Path}'; non-Latin glyphs in '{Font}' may render as '?'",
+                cjkPath,
+                primaryFontName
+            );
+        }
     }
 
     public Texture GetTexture(string imageName)

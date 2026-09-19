@@ -3,8 +3,10 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using PersonaEngine.Lib.ASR.VAD;
 using PersonaEngine.Lib.Audio;
+using PersonaEngine.Lib.Configuration;
 
 namespace PersonaEngine.Lib.ASR.Transcriber;
 
@@ -12,7 +14,9 @@ internal class RealtimeTranscriptor : IRealtimeSpeechTranscriptor, IAsyncDisposa
 {
     private readonly ILogger<RealtimeTranscriptor> _logger;
 
-    private readonly RealtimeSpeechTranscriptorOptions _options;
+    private readonly RealtimeSpeechTranscriptorOptions _behaviorOptions;
+
+    private readonly IOptionsMonitor<AsrConfiguration> _asrOptions;
 
     private readonly RealtimeOptions _realtimeOptions;
 
@@ -32,7 +36,8 @@ internal class RealtimeTranscriptor : IRealtimeSpeechTranscriptor, IAsyncDisposa
         ISpeechTranscriptorFactory speechTranscriptorFactory,
         IVadDetector vadDetector,
         ISpeechTranscriptorFactory? recognizingSpeechTranscriptorFactory,
-        RealtimeSpeechTranscriptorOptions options,
+        RealtimeSpeechTranscriptorOptions behaviorOptions,
+        IOptionsMonitor<AsrConfiguration> asrOptions,
         RealtimeOptions realtimeOptions,
         ILogger<RealtimeTranscriptor> logger
     )
@@ -40,9 +45,52 @@ internal class RealtimeTranscriptor : IRealtimeSpeechTranscriptor, IAsyncDisposa
         _speechTranscriptorFactory = speechTranscriptorFactory;
         _vadDetector = vadDetector;
         _recognizingSpeechTranscriptorFactory = recognizingSpeechTranscriptorFactory;
-        _options = options;
+        _behaviorOptions = behaviorOptions;
+        _asrOptions = asrOptions;
         _realtimeOptions = realtimeOptions;
         _logger = logger;
+    }
+
+    /// <summary>
+    ///     Merges the fixed behavior flags with the live <see cref="AsrConfiguration" />
+    ///     so language, prompt, and decoder-template edits apply to the next utterance
+    ///     without restarting the pipeline.
+    /// </summary>
+    private RealtimeSpeechTranscriptorOptions CurrentOptions
+        => ComposeOptions(_behaviorOptions, _asrOptions.CurrentValue);
+
+    /// <summary>
+    ///     Merges the fixed behavior flags with the live ASR configuration. Kept
+    ///     internal and pure so the hot-reload merge is unit-testable.
+    /// </summary>
+    internal static RealtimeSpeechTranscriptorOptions ComposeOptions(
+        RealtimeSpeechTranscriptorOptions behavior,
+        AsrConfiguration asr
+    ) => behavior with
+    {
+        LanguageAutoDetect = asr.LanguageAutoDetect,
+        Language = ResolveLanguage(asr.Language),
+        Prompt = asr.TtsPrompt,
+        Template = asr.TtsMode,
+    };
+
+    private static CultureInfo ResolveLanguage(string languageName)
+    {
+        // GetCultureInfo("") returns the invariant culture (Name == "") rather than
+        // throwing, and an empty name would fail Whisper's language mapping later.
+        if (string.IsNullOrWhiteSpace(languageName))
+        {
+            return CultureInfo.GetCultureInfo("en-US");
+        }
+
+        try
+        {
+            return CultureInfo.GetCultureInfo(languageName);
+        }
+        catch (CultureNotFoundException)
+        {
+            return CultureInfo.GetCultureInfo("en-US");
+        }
     }
 
     public ValueTask DisposeAsync()
@@ -64,7 +112,7 @@ internal class RealtimeTranscriptor : IRealtimeSpeechTranscriptor, IAsyncDisposa
     {
         ObjectDisposedException.ThrowIf(_isDisposed, this);
 
-        var promptBuilder = new StringBuilder(_options.Prompt);
+        var promptBuilder = new StringBuilder(CurrentOptions.Prompt);
         CultureInfo? detectedLanguage = null;
 
         await source.WaitForInitializationAsync(cancellationToken);
@@ -138,7 +186,7 @@ internal class RealtimeTranscriptor : IRealtimeSpeechTranscriptor, IAsyncDisposa
 
                 await foreach (var segmentData in transcribingEvents)
                 {
-                    if (_options.AutodetectLanguageOnce)
+                    if (CurrentOptions.AutodetectLanguageOnce)
                     {
                         detectedLanguage = segmentData.Language;
                     }
@@ -163,7 +211,7 @@ internal class RealtimeTranscriptor : IRealtimeSpeechTranscriptor, IAsyncDisposa
                 }
             }
 
-            if (_options.IncludeSpeechRecogizingEvents && recognizingSegment != null)
+            if (CurrentOptions.IncludeSpeechRecogizingEvents && recognizingSegment != null)
             {
                 _logger.LogDebug(
                     "Processing recognizing segment: Duration={Duration}ms",
@@ -313,25 +361,26 @@ internal class RealtimeTranscriptor : IRealtimeSpeechTranscriptor, IAsyncDisposa
                 ? GetSilenceAddedSource(source, paddedStart, paddedDuration)
                 : new SliceAudioSource(source, paddedStart, paddedDuration);
 
-        var languageAutodetect = _options.LanguageAutoDetect;
-        var language = _options.Language;
+        var currentOptions = CurrentOptions;
+        var languageAutodetect = currentOptions.LanguageAutoDetect;
+        var language = currentOptions.Language;
 
-        if (languageAutodetect && _options.AutodetectLanguageOnce && detectedLanguage != null)
+        if (languageAutodetect && currentOptions.AutodetectLanguageOnce && detectedLanguage != null)
         {
             languageAutodetect = false;
             language = detectedLanguage;
         }
 
-        var currentOptions = _options with
+        var segmentOptions = currentOptions with
         {
             Prompt = _realtimeOptions.ConcatenateSegmentsToPrompt
                 ? promptBuilder.ToString()
-                : _options.Prompt,
+                : currentOptions.Prompt,
             LanguageAutoDetect = languageAutodetect,
             Language = language,
         };
 
-        await using var transcriptor = transcriptorFactory.Create(currentOptions);
+        await using var transcriptor = transcriptorFactory.Create(segmentOptions);
 
         await foreach (var segment in transcriptor.TranscribeAsync(paddedSource, cancellationToken))
         {

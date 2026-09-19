@@ -1,7 +1,6 @@
 #pragma warning disable SKEXP0001
 
 using System.Diagnostics.CodeAnalysis;
-using System.Globalization;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -10,6 +9,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.SemanticKernel;
 using PersonaEngine.Lib.ASR.Transcriber;
+using PersonaEngine.Lib.ASR.Transcriber.Doubao;
 using PersonaEngine.Lib.ASR.VAD;
 using PersonaEngine.Lib.Assets;
 using PersonaEngine.Lib.Assets.Manifest;
@@ -213,19 +213,15 @@ public static class ServiceCollectionExtensions
         // Loading the Turbo factory unconditionally crashes DI build for non-Build profiles
         // because the .bin isn't present.
         var hasTurbo = catalog.IsFeatureEnabled(FeatureIds.AsrAccurate);
-        services.AddSingleton<IRealtimeSpeechTranscriptor>(sp =>
+        services.AddSingleton<RealtimeTranscriptor>(sp =>
         {
-            var asrOptions = sp.GetRequiredService<IOptions<AsrConfiguration>>().Value;
+            var asrOptions = sp.GetRequiredService<IOptionsMonitor<AsrConfiguration>>();
 
             var realtimeSpeechTranscriptorOptions = new RealtimeSpeechTranscriptorOptions
             {
                 AutodetectLanguageOnce = false,
                 IncludeSpeechRecogizingEvents = false,
                 RetrieveTokenDetails = false,
-                LanguageAutoDetect = false,
-                Language = new CultureInfo("en-US"),
-                Prompt = asrOptions.TtsPrompt,
-                Template = asrOptions.TtsMode,
             };
 
             var realTimeOptions = new RealtimeOptions();
@@ -247,10 +243,21 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<IVadDetector>(),
                 bargeIn,
                 realtimeSpeechTranscriptorOptions,
+                asrOptions,
                 realTimeOptions,
                 sp.GetRequiredService<ILogger<RealtimeTranscriptor>>()
             );
         });
+
+        services.AddSingleton<DoubaoRealtimeSpeechTranscriptor>();
+        services.AddSingleton<IDoubaoConnectionProbe, DoubaoConnectionProbe>();
+        services.AddSingleton<IRealtimeSpeechTranscriptor>(sp =>
+            new SelectingRealtimeTranscriptor(
+                sp.GetRequiredService<IOptionsMonitor<AsrConfiguration>>(),
+                sp.GetRequiredService<RealtimeTranscriptor>(),
+                sp.GetRequiredService<DoubaoRealtimeSpeechTranscriptor>()
+            )
+        );
 
         services.AddSingleton<IMicrophone, MicrophoneInputNAudioSource>();
         services.AddSingleton<IAwaitableAudioSource>(sp => sp.GetRequiredService<IMicrophone>());

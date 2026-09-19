@@ -124,7 +124,8 @@ public class AvatarApp : IDisposable
             _window,
             _inputContext,
             Path.Combine(@"Resources\Fonts", @"Montserrat.ttf"),
-            Path.Combine(@"Resources\Fonts", @"Seguiemj.ttf")
+            Path.Combine(@"Resources\Fonts", @"Seguiemj.ttf"),
+            CjkFontResolver.TryResolve(allowTtc: true)
         );
 
         InitializeComponents(_regularComponents);

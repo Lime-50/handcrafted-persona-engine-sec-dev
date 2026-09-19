@@ -20,6 +20,19 @@ namespace PersonaEngine.Lib.UI.ControlPanel;
 
 public class ImGuiController : IDisposable
 {
+    // Chinese-oriented glyph ranges for the merged CJK fallback font: general
+    // punctuation, CJK symbols + kana, unified ideographs, compatibility ideographs,
+    // and fullwidth forms. Kept deliberately smaller than the full 0x1-0x1FFFF range
+    // so the font atlas doesn't rasterize tens of thousands of unused codepoints.
+    private static readonly uint[] CjkGlyphRanges =
+    [
+        0x2010, 0x205F, // General punctuation (dashes, curly quotes)
+        0x3000, 0x30FF, // CJK symbols/punctuation + Hiragana/Katakana
+        0x4E00, 0x9FFF, // CJK Unified Ideographs
+        0xF900, 0xFAFF, // CJK Compatibility Ideographs
+        0xFF00, 0xFFEF, // Fullwidth forms
+    ];
+
     [FixedAddressValueType]
     private static SetClipboardDelegate setClipboardFn;
 
@@ -88,7 +101,7 @@ public class ImGuiController : IDisposable
     ///     Constructs a new ImGuiController with an onConfigureIO Action.
     /// </summary>
     public ImGuiController(GL gl, IView view, IInputContext input, Action? onConfigureIO)
-        : this(gl, view, input, null, null, onConfigureIO) { }
+        : this(gl, view, input, null, null, null, onConfigureIO) { }
 
     /// <summary>
     ///     Constructs a new ImGuiController with font configuration and onConfigure Action.
@@ -99,6 +112,7 @@ public class ImGuiController : IDisposable
         IInputContext input,
         string? primaryFontPath = null,
         string? emojiFontPath = null,
+        string? cjkFontPath = null,
         Action? onConfigureIO = null
     )
     {
@@ -126,6 +140,19 @@ public class ImGuiController : IDisposable
             });
 
             fontBuilder.AddFontFromFileTTF(emojiFontPath, 14f, [0x1, 0x1FFFF]);
+        }
+
+        if (cjkFontPath != null)
+        {
+            // Merge into the atlas already populated by the primary font: CJK glyphs
+            // come from this font, everything else keeps Montserrat's look.
+            fontBuilder.SetOption(config =>
+            {
+                config.MergeMode = true;
+                config.PixelSnapH = true;
+            });
+
+            fontBuilder.AddFontFromFileTTF(cjkFontPath, 18f, CjkGlyphRanges);
         }
 
         _ = fontBuilder.Build();
