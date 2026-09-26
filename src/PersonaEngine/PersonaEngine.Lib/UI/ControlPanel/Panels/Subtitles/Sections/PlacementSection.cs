@@ -40,6 +40,10 @@ public sealed class PlacementSection : IDisposable
                     BottomMargin = Defaults.BottomMargin,
                     SideMargin = Defaults.SideMargin,
                     InterSegmentSpacing = Defaults.InterSegmentSpacing,
+                    MaxCharsPerCue = Defaults.MaxCharsPerCue,
+                    MinCharsPerCue = Defaults.MinCharsPerCue,
+                    MaxCueDurationSeconds = Defaults.MaxCueDurationSeconds,
+                    CuePauseThresholdSeconds = Defaults.CuePauseThresholdSeconds,
                     AnimationDuration = Defaults.AnimationDuration,
                 };
                 _configWriter.Write(_opts);
@@ -49,6 +53,9 @@ public sealed class PlacementSection : IDisposable
             RenderBottomMarginRow(dt);
             RenderSideMarginRow(dt);
             RenderInterSegmentRow(dt);
+            RenderCueCharsRow(dt);
+            RenderCueDurationRow(dt);
+            RenderPauseThresholdRow(dt);
             RenderAnimationRow(dt);
         }
     }
@@ -60,6 +67,10 @@ public sealed class PlacementSection : IDisposable
         || _opts.BottomMargin != Defaults.BottomMargin
         || _opts.SideMargin != Defaults.SideMargin
         || MathF.Abs(_opts.InterSegmentSpacing - Defaults.InterSegmentSpacing) > 0.5f
+        || _opts.MaxCharsPerCue != Defaults.MaxCharsPerCue
+        || _opts.MinCharsPerCue != Defaults.MinCharsPerCue
+        || MathF.Abs(_opts.MaxCueDurationSeconds - Defaults.MaxCueDurationSeconds) > 0.05f
+        || MathF.Abs(_opts.CuePauseThresholdSeconds - Defaults.CuePauseThresholdSeconds) > 0.01f
         || MathF.Abs(_opts.AnimationDuration - Defaults.AnimationDuration) > 1e-3f;
 
     private bool RenderHeader()
@@ -187,6 +198,95 @@ public sealed class PlacementSection : IDisposable
         )
         {
             _opts = _opts with { InterSegmentSpacing = spacing };
+            _configWriter.Write(_opts);
+        }
+
+        ImGuiHelpers.SettingEndRow(rowY);
+    }
+
+    private void RenderCueCharsRow(float dt)
+    {
+        var rowY = ImGui.GetCursorPosY();
+
+        ImGuiHelpers.SettingLabel(
+            "Cue Length",
+            "Weighted characters per subtitle cue. Chinese counts as 1, Latin as 0.5."
+        );
+
+        var maxChars = _opts.MaxCharsPerCue;
+        if (
+            ImGuiHelpers.LabeledSlider(
+                "##SubtitleCueChars",
+                ref maxChars,
+                8,
+                60,
+                "Short",
+                "Long",
+                dt
+            )
+        )
+        {
+            _opts = _opts with { MaxCharsPerCue = maxChars };
+            _configWriter.Write(_opts);
+        }
+
+        ImGuiHelpers.SettingEndRow(rowY);
+    }
+
+    private void RenderCueDurationRow(float dt)
+    {
+        var rowY = ImGui.GetCursorPosY();
+
+        ImGuiHelpers.SettingLabel(
+            "Cue Duration",
+            "Maximum seconds per subtitle cue before a hard split."
+        );
+
+        var duration = _opts.MaxCueDurationSeconds;
+        if (
+            ImGuiHelpers.LabeledSlider(
+                "##SubtitleCueDuration",
+                ref duration,
+                1.0f,
+                6.0f,
+                "Quick",
+                "Relaxed",
+                "%.1fs",
+                dt
+            )
+        )
+        {
+            _opts = _opts with { MaxCueDurationSeconds = duration };
+            _configWriter.Write(_opts);
+        }
+
+        ImGuiHelpers.SettingEndRow(rowY);
+    }
+
+    private void RenderPauseThresholdRow(float dt)
+    {
+        var rowY = ImGui.GetCursorPosY();
+
+        ImGuiHelpers.SettingLabel(
+            "Pause Break",
+            "Word-gap pause treated as a natural subtitle break."
+        );
+
+        var pause = _opts.CuePauseThresholdSeconds;
+        if (
+            ImGuiHelpers.LabeledSlider(
+                "##SubtitleCuePause",
+                ref pause,
+                0.15f,
+                1.0f,
+                "Sensitive",
+                "Strict",
+                "%.2fs",
+                dt
+            )
+        )
+        {
+            _opts = _opts with { CuePauseThresholdSeconds = pause };
             _configWriter.Write(_opts);
         }
 

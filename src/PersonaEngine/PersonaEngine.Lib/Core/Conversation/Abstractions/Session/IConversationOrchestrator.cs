@@ -58,6 +58,14 @@ public interface IConversationOrchestrator : IAsyncDisposable
     /// </summary>
     ValueTask RetryErroredSessionsAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>
+    ///     Clears the conversation context of every active session: any in-flight turn is
+    ///     aborted through the session's state machine and the committed transcript is
+    ///     dropped, so subsequent turns start from a blank slate. Errors on individual
+    ///     sessions are logged and do not prevent others from being cleared.
+    /// </summary>
+    ValueTask ClearAllContextsAsync(CancellationToken cancellationToken = default);
+
     event EventHandler? SessionsUpdated;
 
     /// <summary>

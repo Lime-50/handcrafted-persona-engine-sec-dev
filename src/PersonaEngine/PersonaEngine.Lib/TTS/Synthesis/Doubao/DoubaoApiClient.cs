@@ -46,18 +46,9 @@ public sealed class DoubaoApiClient
     )
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, options.Endpoint);
-        request.Headers.TryAddWithoutValidation("X-Api-Resource-Id", options.ResourceId);
-        request.Headers.TryAddWithoutValidation("X-Api-Request-Id", Guid.NewGuid().ToString());
-        request.Headers.TryAddWithoutValidation("Accept", "text/event-stream");
-
-        if (!string.IsNullOrWhiteSpace(options.ApiKey))
+        foreach (var (name, value) in BuildRequestHeaders(options))
         {
-            request.Headers.TryAddWithoutValidation("X-Api-Key", options.ApiKey);
-        }
-        else
-        {
-            request.Headers.TryAddWithoutValidation("X-Api-App-Id", options.AppId);
-            request.Headers.TryAddWithoutValidation("X-Api-Access-Key", options.AccessKey);
+            request.Headers.TryAddWithoutValidation(name, value);
         }
 
         request.Content = JsonContent.Create(BuildRequestBody(text, voice, options));
@@ -73,8 +64,16 @@ public sealed class DoubaoApiClient
         if (!response.IsSuccessStatusCode)
         {
             var detail = await response.Content.ReadAsStringAsync(timeoutCts.Token).ConfigureAwait(false);
+            var logId = response.Headers.TryGetValues("X-Tt-Logid", out var values)
+                ? string.Join(", ", values)
+                : null;
+            var logSuffix = string.IsNullOrWhiteSpace(logId)
+                ? string.Empty
+                : $" (X-Tt-Logid: {logId})";
+
             throw new DoubaoApiException(
-                $"Doubao TTS HTTP {(int)response.StatusCode} {response.ReasonPhrase}: {detail}"
+                $"Doubao TTS HTTP {(int)response.StatusCode} {response.ReasonPhrase}"
+                    + $"{logSuffix}: {detail}"
             );
         }
 
@@ -125,7 +124,21 @@ public sealed class DoubaoApiClient
                 throw new DoubaoApiException(evt.Code, evt.Message ?? "unknown error");
             }
 
-            var audio = evt.Data is null ? null : Convert.FromBase64String(evt.Data);
+            byte[]? audio = null;
+            if (!string.IsNullOrEmpty(evt.Data))
+            {
+                try
+                {
+                    audio = Convert.FromBase64String(evt.Data);
+                }
+                catch (FormatException ex)
+                {
+                    throw new DoubaoApiException(
+                        $"Doubao TTS returned invalid base64 audio: {ex.Message}"
+                    );
+                }
+            }
+
             yield return new DoubaoSynthesisEvent(audio, evt.Sentence);
 
             if (evt.Code == 20000000)
@@ -135,12 +148,63 @@ public sealed class DoubaoApiClient
         }
     }
 
-    private static Dictionary<string, object?> BuildRequestBody(
+    internal static IReadOnlyDictionary<string, string> BuildRequestHeaders(
+        DoubaoTtsOptions options
+    )
+    {
+        ArgumentNullException.ThrowIfNull(options);
+
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["X-Api-Resource-Id"] = RequireValue(
+                options.ResourceId,
+                "a resource ID",
+                "Config:Tts:Doubao:ResourceId"
+            ),
+            ["X-Api-Request-Id"] = Guid.NewGuid().ToString(),
+            ["Accept"] = "text/event-stream",
+        };
+
+        switch (options.AuthMode)
+        {
+            case DoubaoTtsAuthMode.ApiKey:
+                headers["X-Api-Key"] = RequireValue(
+                    options.ApiKey,
+                    "an API key",
+                    "Config:Tts:Doubao:ApiKey"
+                );
+                break;
+            case DoubaoTtsAuthMode.AppIdAccessKey:
+                headers["X-Api-App-Id"] = RequireValue(
+                    options.AppId,
+                    "an App ID",
+                    "Config:Tts:Doubao:AppId"
+                );
+                headers["X-Api-Access-Key"] = RequireValue(
+                    options.AccessKey,
+                    "an Access Key",
+                    "Config:Tts:Doubao:AccessKey"
+                );
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unsupported Doubao TTS authentication mode '{options.AuthMode}'."
+                );
+        }
+
+        return headers;
+    }
+
+    internal static Dictionary<string, object?> BuildRequestBody(
         string text,
         string voice,
         DoubaoTtsOptions options
     )
     {
+        // Ids pasted from the console often carry stray whitespace; the API rejects them
+        // verbatim, so normalise once here.
+        voice = voice?.Trim() ?? string.Empty;
+
         var audioParams = new Dictionary<string, object?>
         {
             ["format"] = options.Format,
@@ -182,9 +246,26 @@ public sealed class DoubaoApiClient
                 ["text"] = text,
                 ["speaker"] = voice,
                 ["audio_params"] = audioParams,
-                ["additions"] = additions,
+                ["additions"] = JsonSerializer.Serialize(additions),
             },
         };
+    }
+
+    private static string RequireValue(
+        string? value,
+        string label,
+        string configPath
+    )
+    {
+        var trimmed = value?.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            throw new InvalidOperationException(
+                $"Doubao TTS requires {label}. Configure {configPath}."
+            );
+        }
+
+        return trimmed;
     }
 
     /// <summary>One SSE payload. <c>data</c> is base64 audio; <c>sentence</c> carries optional timestamps.</summary>

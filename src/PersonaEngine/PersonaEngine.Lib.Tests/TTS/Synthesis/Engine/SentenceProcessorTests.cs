@@ -162,6 +162,100 @@ public class SentenceProcessorTests
     }
 
     [Fact]
+    public async Task ProcessAsync_PunctuationOnlyAfterFiltering_IsSkipped()
+    {
+        // "[EMOTION:🙄]。" is stripped down to punctuation by the text filters. Sending
+        // that to a cloud engine fails ("45002001 No readable text!"), so it must never
+        // reach synthesis.
+        var textFilter = Substitute.For<ITextFilter>();
+        textFilter.Priority.Returns(1);
+        textFilter
+            .ProcessAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new TextFilterResult { ProcessedText = "。" });
+
+        var processor = CreateProcessor(textFilters: [textFilter]);
+
+        var results = new List<AudioSegment>();
+        await foreach (
+            var s in processor.ProcessAsync(
+                _session,
+                "[EMOTION:🙄]。",
+                isLastSegment: false,
+                CancellationToken.None
+            )
+        )
+        {
+            results.Add(s);
+        }
+
+        Assert.Empty(results);
+        await _phonemizer.DidNotReceive().ToPhonemesAsync(Arg.Any<string>(), Arg.Any<CancellationToken>());
+
+        // Returns an IAsyncEnumerable, so the received-check is not awaited.
+        _session
+            .DidNotReceive()
+            .SynthesizeAsync(
+                Arg.Any<string>(),
+                Arg.Any<PhonemeResult>(),
+                Arg.Any<bool>(),
+                Arg.Any<CancellationToken>()
+            );
+    }
+
+    [Fact]
+    public async Task ProcessAsync_EmojiOnlyAfterFiltering_IsSkipped()
+    {
+        var textFilter = Substitute.For<ITextFilter>();
+        textFilter.Priority.Returns(1);
+        textFilter
+            .ProcessAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new TextFilterResult { ProcessedText = "😄✨" });
+
+        var processor = CreateProcessor(textFilters: [textFilter]);
+
+        var results = new List<AudioSegment>();
+        await foreach (
+            var s in processor.ProcessAsync(_session, "text", isLastSegment: false, CancellationToken.None)
+        )
+        {
+            results.Add(s);
+        }
+
+        Assert.Empty(results);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_TextWithCjk_IsSpoken()
+    {
+        var processor = CreateProcessor();
+        var segment = new AudioSegment(new float[] { 1f }, 24000, new List<Token>());
+
+        _session
+            .SynthesizeAsync(
+                Arg.Any<string>(),
+                Arg.Any<PhonemeResult>(),
+                Arg.Any<bool>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(ToAsyncEnumerable(segment));
+
+        var results = new List<AudioSegment>();
+        await foreach (
+            var s in processor.ProcessAsync(
+                _session,
+                "你好，今天天气不错。",
+                isLastSegment: false,
+                CancellationToken.None
+            )
+        )
+        {
+            results.Add(s);
+        }
+
+        Assert.Single(results);
+    }
+
+    [Fact]
     public async Task ProcessAsync_SetsUniqueSentenceIdOnSegments()
     {
         var processor = CreateProcessor();

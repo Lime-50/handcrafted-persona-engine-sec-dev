@@ -114,11 +114,18 @@ public class LAppLive2DManager(LAppDelegate lapp) : IDisposable
     {
         lapp.GL.GetWindowSize(out var width, out var height);
 
-        var modelCount = _models.Count;
+        if (width <= 0 || height <= 0)
+        {
+            return;
+        }
+
         foreach (var model in _models)
         {
             _projection.LoadIdentity();
 
+            // Reset the model matrix to a known fit every frame, then layer the
+            // user's framing on top. Both branches are absolute assignments, so
+            // repeated frames can never accumulate scale or translation.
             if (model.Model.GetCanvasWidth() > 1.0f && width < height)
             {
                 // 横に長いモデルを縦長ウィンドウに表示する際モデルの横サイズでscaleを算出する
@@ -127,8 +134,11 @@ public class LAppLive2DManager(LAppDelegate lapp) : IDisposable
             }
             else
             {
+                model.ModelMatrix.SetHeight(2.0f);
                 _projection.Scale((float)height / width, 1.0f);
             }
+
+            ApplyFraming(model);
 
             // 必要があればここで乗算
             if (ViewMatrix != null)
@@ -139,6 +149,45 @@ public class LAppLive2DManager(LAppDelegate lapp) : IDisposable
             model.Update();
             model.Draw(_projection); // 参照渡しなのでprojectionは変質する
         }
+    }
+
+    /// <summary>
+    ///     Zoom (1.0 = whole model) applied on top of the automatic fit.
+    /// </summary>
+    public float FramingZoom { get; set; } = 1.0f;
+
+    /// <summary>Horizontal framing offset in view units; positive moves the model right.</summary>
+    public float FramingOffsetX { get; set; }
+
+    /// <summary>
+    ///     Vertical framing offset in view units; negative moves the model down, which
+    ///     brings the head/upper body into frame after zooming in.
+    /// </summary>
+    public float FramingOffsetY { get; set; }
+
+    /// <summary>
+    ///     Idle-motion amplitude multipliers (1.0 = framework default, 0 = off), read by
+    ///     <see cref="LAppModel" /> every frame so they can be tuned live.
+    /// </summary>
+    public float IdleHeadSway { get; set; } = 1.0f;
+
+    /// <inheritdoc cref="IdleHeadSway" />
+    public float IdleBodySway { get; set; } = 1.0f;
+
+    /// <inheritdoc cref="IdleHeadSway" />
+    public float IdleBreathSway { get; set; } = 1.0f;
+
+    /// <summary>Idle-motion speed multiplier (1.0 = framework default).</summary>
+    public float IdleMotionSpeed { get; set; } = 1.0f;
+
+    private void ApplyFraming(LAppModel model)
+    {
+        var baseScale = model.ModelMatrix.GetScaleX();
+        var scale = baseScale * FramingZoom;
+
+        model.ModelMatrix.Scale(scale, scale);
+        model.ModelMatrix.TranslateX(FramingOffsetX);
+        model.ModelMatrix.TranslateY(FramingOffsetY);
     }
 
     public LAppModel LoadModel(string dir, string name)

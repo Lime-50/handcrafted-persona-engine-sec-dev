@@ -250,6 +250,20 @@ public class ConversationOrchestrator(
             cancellationToken
         );
 
+    public ValueTask ClearAllContextsAsync(CancellationToken cancellationToken = default) =>
+        ForEachSessionAsync(
+            static async (session, ct) =>
+            {
+                // Route the abort through the FSM so the pipeline tears down cleanly;
+                // CancelRequested is a benign no-op outside an active turn. Only then
+                // drop the committed transcript, leaving the session idle and empty.
+                await session.CancelAsync(ct).ConfigureAwait(false);
+                session.Context.ClearHistory();
+            },
+            "Error clearing context for session {SessionId}.",
+            cancellationToken
+        );
+
     /// <summary>
     ///     Fan out an independent per-session async operation across every active session and
     ///     await all of them concurrently. Each session's failure is logged with

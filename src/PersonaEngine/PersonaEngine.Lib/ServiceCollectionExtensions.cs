@@ -444,6 +444,7 @@ public static class ServiceCollectionExtensions
             c => c.Timeout = TimeSpan.FromSeconds(60)
         );
         services.AddSingleton<DoubaoApiClient>();
+        services.AddSingleton<IDoubaoTtsConnectionProbe, DoubaoTtsConnectionProbe>();
         services.AddSingleton<ISentenceSynthesizer, DoubaoSentenceSynthesizer>();
 
         // Top-level orchestrator (replaces TtsEngine)
@@ -537,6 +538,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<VoiceModeSelector>();
         services.AddSingleton<VoiceCard>();
         services.AddSingleton<VoiceGallery>();
+        services.AddSingleton<DoubaoVoiceIdSection>();
         services.AddSingleton<DeliverySection>();
         services.AddSingleton<CloneLayerSection>();
         services.AddSingleton<AdvancedSection>();

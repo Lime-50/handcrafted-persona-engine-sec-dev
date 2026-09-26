@@ -20,6 +20,8 @@ public class FontProvider : IStartupTask
 
     private readonly Dictionary<string, FontSystem> _fontCache = new();
 
+    private readonly string _fontsDirectory;
+
     private readonly ILogger<FontProvider> _logger;
 
     private readonly Dictionary<string, Texture> _textureCache = new();
@@ -32,8 +34,16 @@ public class FontProvider : IStartupTask
     // }
 
     public FontProvider(ILogger<FontProvider> logger)
+        : this(logger, FONTS_DIR)
+    {
+    }
+
+    internal FontProvider(ILogger<FontProvider> logger, string fontsDirectory)
     {
         _logger = logger;
+        _fontsDirectory = string.IsNullOrWhiteSpace(fontsDirectory)
+            ? FONTS_DIR
+            : fontsDirectory;
     }
 
     public void Execute(GL gl)
@@ -43,13 +53,13 @@ public class FontProvider : IStartupTask
 
     public IReadOnlyList<string> GetAvailableFonts()
     {
-        if (!Directory.Exists(FONTS_DIR))
+        if (!Directory.Exists(_fontsDirectory))
         {
-            _logger.LogWarning("Fonts directory not found: {Path}", FONTS_DIR);
+            _logger.LogWarning("Fonts directory not found: {Path}", _fontsDirectory);
             return [];
         }
 
-        var fontFiles = Directory.GetFiles(FONTS_DIR, "*.ttf");
+        var fontFiles = EnumerateFontFiles().ToArray();
         var fontNames = new string[fontFiles.Length];
         for (var i = 0; i < fontFiles.Length; i++)
         {
@@ -65,14 +75,14 @@ public class FontProvider : IStartupTask
     {
         try
         {
-            if (!Directory.Exists(FONTS_DIR))
+            if (!Directory.Exists(_fontsDirectory))
             {
-                _logger.LogWarning("Fonts directory not found: {Path}", FONTS_DIR);
+                _logger.LogWarning("Fonts directory not found: {Path}", _fontsDirectory);
 
                 return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
             }
 
-            var fontFiles = Directory.GetFiles(FONTS_DIR, "*.ttf");
+            var fontFiles = EnumerateFontFiles().ToArray();
             var fontNames = new List<string>(fontFiles.Length);
             foreach (var file in fontFiles)
             {
@@ -97,7 +107,7 @@ public class FontProvider : IStartupTask
         if (!_fontCache.TryGetValue(fontName, out var fontSystem))
         {
             fontSystem = new FontSystem();
-            var fontData = File.ReadAllBytes(Path.Combine(FONTS_DIR, fontName));
+            var fontData = File.ReadAllBytes(Path.Combine(_fontsDirectory, fontName));
             fontSystem.AddFont(fontData);
 
             AddCjkFallback(fontSystem, fontName);
@@ -106,6 +116,98 @@ public class FontProvider : IStartupTask
         }
 
         return fontSystem;
+    }
+
+    public string GetFontsDirectory() => Path.GetFullPath(_fontsDirectory);
+
+    /// <summary>
+    ///     Copies a user-provided .ttf/.otf file into the managed fonts folder
+    ///     and returns the file name to persist in <c>SubtitleOptions.Font</c>.
+    /// </summary>
+    public string ImportFont(string sourcePath)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            throw new ArgumentException("Font path is required.", nameof(sourcePath));
+        }
+
+        if (!File.Exists(sourcePath))
+        {
+            throw new FileNotFoundException("The selected font file was not found.", sourcePath);
+        }
+
+        if (!IsSupportedFontFile(sourcePath))
+        {
+            throw new NotSupportedException(
+                $"Only .ttf and .otf fonts are supported: {Path.GetFileName(sourcePath)}"
+            );
+        }
+
+        Directory.CreateDirectory(_fontsDirectory);
+
+        var sourceFullPath = Path.GetFullPath(sourcePath);
+        var fileName = Path.GetFileName(sourcePath);
+        var targetPath = Path.Combine(_fontsDirectory, fileName);
+
+        if (
+            string.Equals(
+                sourceFullPath,
+                Path.GetFullPath(targetPath),
+                StringComparison.OrdinalIgnoreCase
+            )
+        )
+        {
+            return fileName;
+        }
+
+        targetPath = EnsureUniqueFontPath(targetPath);
+        fileName = Path.GetFileName(targetPath);
+        File.Copy(sourceFullPath, targetPath, overwrite: false);
+        _fontCache.Remove(fileName);
+
+        _logger.LogInformation(
+            "Imported font '{Source}' as '{Destination}'",
+            sourcePath,
+            targetPath
+        );
+
+        return fileName;
+    }
+
+    internal static bool IsSupportedFontFile(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".ttf", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".otf", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private IEnumerable<string> EnumerateFontFiles() =>
+        Directory
+            .EnumerateFiles(_fontsDirectory, "*.*", SearchOption.TopDirectoryOnly)
+            .Where(IsSupportedFontFile)
+            .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase);
+
+    private static string EnsureUniqueFontPath(string targetPath)
+    {
+        if (!File.Exists(targetPath))
+        {
+            return targetPath;
+        }
+
+        var directory = Path.GetDirectoryName(targetPath) ?? string.Empty;
+        var fileName = Path.GetFileNameWithoutExtension(targetPath);
+        var extension = Path.GetExtension(targetPath);
+
+        for (var index = 1; index < 10_000; index++)
+        {
+            var candidate = Path.Combine(directory, $"{fileName} ({index}){extension}");
+            if (!File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        throw new IOException($"Could not find a unique file name for '{fileName}'.");
     }
 
     /// <summary>

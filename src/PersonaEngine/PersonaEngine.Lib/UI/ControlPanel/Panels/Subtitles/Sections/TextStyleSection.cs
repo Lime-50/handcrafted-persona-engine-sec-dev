@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Hexa.NET.ImGui.Widgets.Dialogs;
 using Hexa.NET.ImGui;
 using Microsoft.Extensions.Options;
 using PersonaEngine.Lib.Configuration;
@@ -20,6 +22,8 @@ public sealed class TextStyleSection : IDisposable
 
     private SubtitleOptions _opts;
     private bool _initialized;
+    private string? _fontStatusMessage;
+    private bool _fontStatusIsError;
 
     public TextStyleSection(
         IOptionsMonitor<SubtitleOptions> monitor,
@@ -110,6 +114,107 @@ public sealed class TextStyleSection : IDisposable
         }
 
         ImGuiHelpers.SettingEndRow(rowY);
+
+        rowY = ImGui.GetCursorPosY();
+        ImGuiHelpers.SettingLabel(
+            "Font file",
+            "Import a .ttf or .otf file. It is copied into Resources/Fonts."
+        );
+
+        if (ImGui.Button("Add font...##subtitle_font_add"))
+        {
+            OpenFontDialog();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Open folder##subtitle_font_folder"))
+        {
+            OpenFontsFolder();
+        }
+
+        ImGuiHelpers.SettingEndRow(rowY);
+
+        if (!string.IsNullOrWhiteSpace(_fontStatusMessage))
+        {
+            ImGui.PushStyleColor(
+                ImGuiCol.Text,
+                _fontStatusIsError ? Theme.Error : Theme.Success
+            );
+            ImGui.TextWrapped(_fontStatusMessage);
+            ImGui.PopStyleColor();
+        }
+    }
+
+    private void OpenFontDialog()
+    {
+        try
+        {
+            var dialog = new OpenFileDialog(_fontProvider.GetFontsDirectory())
+            {
+                AllowMultipleSelection = false,
+            };
+            dialog.AllowedExtensions.Add(".ttf");
+            dialog.AllowedExtensions.Add(".otf");
+            dialog.OnlyAllowFilteredExtensions = true;
+            dialog.Show(OnFontDialogClosed);
+        }
+        catch (Exception ex)
+        {
+            _fontStatusMessage = ex.Message;
+            _fontStatusIsError = true;
+        }
+    }
+
+    private void OnFontDialogClosed(object? sender, DialogResult result)
+    {
+        if (result != DialogResult.Ok || sender is not OpenFileDialog dialog)
+        {
+            return;
+        }
+
+        var selectedPath = dialog.SelectedFile;
+        if (string.IsNullOrWhiteSpace(selectedPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var importedName = _fontProvider.ImportFont(selectedPath);
+            _picker.Refresh(importedName);
+            _opts = _opts with { Font = importedName };
+            _configWriter.Write(_opts);
+            _picker.RecomputeMissing(_opts.Font);
+            _fontStatusMessage = $"Added '{importedName}'. It is now the active subtitle font.";
+            _fontStatusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            _fontStatusMessage = ex.Message;
+            _fontStatusIsError = true;
+        }
+    }
+
+    private void OpenFontsFolder()
+    {
+        try
+        {
+            var directory = _fontProvider.GetFontsDirectory();
+            Directory.CreateDirectory(directory);
+
+            Process.Start(
+                new ProcessStartInfo
+                {
+                    FileName = directory,
+                    UseShellExecute = true,
+                }
+            );
+        }
+        catch (Exception ex)
+        {
+            _fontStatusMessage = ex.Message;
+            _fontStatusIsError = true;
+        }
     }
 
     // ── Size row ──────────────────────────────────────────────────────────────

@@ -7,9 +7,15 @@ namespace PersonaEngine.Lib.UI.Rendering.Subtitles;
 ///     Processes raw AudioSegments into structured SubtitleSegments containing lines and words
 ///     with calculated timing and layout information.
 /// </summary>
-public class SubtitleProcessor(TextMeasurer textMeasurer, float defaultWordDuration = 0.3f)
+public class SubtitleProcessor(
+    TextMeasurer textMeasurer,
+    float defaultWordDuration = 0.3f,
+    SubtitleCueOptions? cueOptions = null
+)
 {
     private float _defaultWordDuration = Math.Max(0.01f, defaultWordDuration);
+
+    private SubtitleCueOptions _cueOptions = cueOptions ?? new SubtitleCueOptions();
 
     private readonly StringBuilder _textBuilder = new();
 
@@ -21,6 +27,94 @@ public class SubtitleProcessor(TextMeasurer textMeasurer, float defaultWordDurat
     public void SetDefaultWordDuration(float value)
     {
         _defaultWordDuration = Math.Max(0.01f, value);
+    }
+
+    public void SetCueOptions(SubtitleCueOptions options)
+    {
+        _cueOptions = options ?? new SubtitleCueOptions();
+    }
+
+    /// <summary>
+    ///     Splits one audio segment into short subtitle cues. The audio segment
+    ///     is not re-synthesized; only the subtitle display is split.
+    /// </summary>
+    public IReadOnlyList<SubtitleSegment> ProcessSegmentCues(
+        AudioSegment? audioSegment,
+        float segmentAbsoluteStartTime
+    )
+    {
+        if (audioSegment == null || audioSegment.Tokens.Count == 0)
+        {
+            return [];
+        }
+
+        var cues = SubtitleCueSegmenter.Split(audioSegment, _cueOptions);
+        if (cues.Count == 0)
+        {
+            return [];
+        }
+
+        var result = new List<SubtitleSegment>(cues.Count);
+        foreach (var cue in cues)
+        {
+            if (string.IsNullOrWhiteSpace(cue.Text))
+            {
+                continue;
+            }
+
+            var cueSegment = new AudioSegment(
+                Memory<float>.Empty,
+                audioSegment.SampleRate,
+                cue.Tokens
+            )
+            {
+                SentenceId = audioSegment.SentenceId,
+            };
+
+            result.Add(
+                ProcessSegment(
+                    cueSegment,
+                    segmentAbsoluteStartTime + cue.StartOffsetSeconds
+                )
+            );
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    ///     Returns true when another incremental TTS chunk can be appended to
+    ///     the current cue without exceeding the configured cue limits.
+    /// </summary>
+    public bool CanAppendToCue(SubtitleSegment cue, AudioSegment chunk)
+    {
+        ArgumentNullException.ThrowIfNull(cue);
+        ArgumentNullException.ThrowIfNull(chunk);
+
+        if (chunk.Tokens.Count == 0)
+        {
+            return false;
+        }
+
+        if (SubtitleCueSegmenter.EndsWithBoundary(cue.FullText))
+        {
+            return false;
+        }
+
+        var cueChars = SubtitleCueSegmenter.CountWeightedChars(cue.FullText);
+        var chunkChars = SubtitleCueSegmenter.CountWeightedCharsForTokens(chunk.Tokens);
+        if (cueChars + chunkChars > _cueOptions.MaxWeightedCharsPerCue)
+        {
+            return false;
+        }
+
+        var cueDuration = Math.Max(0f, cue.EstimatedEndTime - cue.AbsoluteStartTime);
+        if (cueDuration + chunk.DurationInSeconds > _cueOptions.MaxDurationPerCueSeconds)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     public SubtitleSegment ProcessSegment(

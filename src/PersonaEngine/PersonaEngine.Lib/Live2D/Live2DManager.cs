@@ -16,6 +16,8 @@ public class Live2DManager : IRenderComponent
 
     private readonly IOptionsMonitor<Live2DOptions> _options;
 
+    private readonly IDisposable? _optionsSubscription;
+
     private LAppDelegate? _lapp;
 
     public Live2DManager(
@@ -25,6 +27,11 @@ public class Live2DManager : IRenderComponent
     {
         _options = options;
         _live2DAnimationServices = live2DAnimationServices.ToList();
+
+        // Framing and idle-motion amplitudes only feed numbers into the render loop,
+        // so they can be re-applied live: dragging a slider updates the avatar
+        // without a restart.
+        _optionsSubscription = _options.OnChange(ApplyRenderSettings);
     }
 
     public bool UseSpout => true;
@@ -68,11 +75,14 @@ public class Live2DManager : IRenderComponent
             : Path.Combine(AppContext.BaseDirectory, config.ModelPath);
 
         LoadModel(modelPath, config.ModelName);
+
+        ApplyRenderSettings(config);
     }
 
     public void Dispose()
     {
         // Context is destroyed anyway when app closes.
+        _optionsSubscription?.Dispose();
     }
 
     /// <summary>
@@ -89,8 +99,8 @@ public class Live2DManager : IRenderComponent
         model.RandomMotion = false;
         model.CustomValueUpdate = true;
 
-        // model.ModelMatrix.Translate(0.0f, -1.8f);
-        model.ModelMatrix.ScaleRelative(0.7f, 0.7f);
+        // Model matrix scaling/positioning is owned by LAppLive2DManager.OnUpdate, which
+        // re-derives the automatic fit and applies the configured framing every frame.
 
         Resize();
 
@@ -99,5 +109,22 @@ public class Live2DManager : IRenderComponent
             model.ValueUpdate += _ => animationService.Update(LAppPal.DeltaTime);
             animationService.Start(model);
         }
+    }
+
+    private void ApplyRenderSettings(Live2DOptions options)
+    {
+        if (_lapp?.Live2dManager is not { } live2dManager)
+        {
+            return;
+        }
+
+        live2dManager.FramingZoom = (float)options.ModelZoom;
+        live2dManager.FramingOffsetX = (float)options.ModelOffsetX;
+        live2dManager.FramingOffsetY = (float)options.ModelOffsetY;
+
+        live2dManager.IdleHeadSway = (float)options.IdleHeadSway;
+        live2dManager.IdleBodySway = (float)options.IdleBodySway;
+        live2dManager.IdleBreathSway = (float)options.IdleBreathSway;
+        live2dManager.IdleMotionSpeed = (float)options.IdleMotionSpeed;
     }
 }

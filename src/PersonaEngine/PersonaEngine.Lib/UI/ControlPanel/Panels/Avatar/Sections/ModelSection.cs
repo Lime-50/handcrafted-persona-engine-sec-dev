@@ -97,6 +97,8 @@ public sealed class ModelSection : IDisposable
 
             RenderCharacterRow();
             RenderResolutionRow();
+            RenderFramingRows(dt);
+            RenderIdleMotionRows(dt);
         }
     }
 
@@ -131,6 +133,214 @@ public sealed class ModelSection : IDisposable
     }
 
     // ── Resolution row ────────────────────────────────────────────────────────
+
+    /// <summary>
+    ///     Zoom + pan applied on top of the automatic fit. Lets a full-body model be
+    ///     framed down to the upper body, or an off-centre canvas be re-centred.
+    ///     Applies live: the Live2D renderer re-reads these values on every config change,
+    ///     so the avatar updates while a slider is dragged (no restart needed).
+    /// </summary>
+    private void RenderFramingRows(float dt)
+    {
+        ImGuiHelpers.SettingLabel(
+            "Zoom",
+            "1.0 fits the whole model in frame. Raise it to crop in (e.g. upper body only)."
+        );
+
+        var zoom = (float)_live2d.ModelZoom;
+        if (
+            ImGuiHelpers.LabeledSlider(
+                "##model_zoom",
+                ref zoom,
+                0.5f,
+                3.0f,
+                "Wide",
+                "Close",
+                "%.2f",
+                dt
+            )
+        )
+        {
+            _live2d = _live2d with { ModelZoom = MathF.Round(zoom, 3) };
+            _configWriter.Write(_live2d);
+        }
+
+        ImGuiHelpers.SettingLabel(
+            "Vertical",
+            "Moves the model up/down. Negative values bring the head down into frame after zooming."
+        );
+
+        var offsetY = (float)_live2d.ModelOffsetY;
+        if (
+            ImGuiHelpers.LabeledSlider(
+                "##model_y",
+                ref offsetY,
+                -1.5f,
+                1.5f,
+                "Down",
+                "Up",
+                "%.2f",
+                dt
+            )
+        )
+        {
+            _live2d = _live2d with { ModelOffsetY = MathF.Round(offsetY, 3) };
+            _configWriter.Write(_live2d);
+        }
+
+        ImGuiHelpers.SettingLabel("Horizontal", "Moves the model left/right.");
+
+        var offsetX = (float)_live2d.ModelOffsetX;
+        if (
+            ImGuiHelpers.LabeledSlider(
+                "##model_x",
+                ref offsetX,
+                -1.5f,
+                1.5f,
+                "Left",
+                "Right",
+                "%.2f",
+                dt
+            )
+        )
+        {
+            _live2d = _live2d with { ModelOffsetX = MathF.Round(offsetX, 3) };
+            _configWriter.Write(_live2d);
+        }
+
+        if (ImGuiHelpers.SubtleButton("Reset Framing", IsFramingModified()))
+        {
+            _live2d = _live2d with { ModelZoom = 1.0, ModelOffsetX = 0.0, ModelOffsetY = 0.0 };
+            _configWriter.Write(_live2d);
+        }
+
+        ImGuiHelpers.Tooltip("Back to the automatic fit (zoom 1.0, centred).");
+    }
+
+    private bool IsFramingModified() =>
+        Math.Abs(_live2d.ModelZoom - 1.0) > 0.001
+        || Math.Abs(_live2d.ModelOffsetX) > 0.001
+        || Math.Abs(_live2d.ModelOffsetY) > 0.001;
+
+    /// <summary>
+    ///     Amplitude/speed controls for the idle motion (head sway, body sway, chest
+    ///     breathing). Lets a motionless VTube Studio model come alive, and lets a
+    ///     twitchy one be toned down. Applied live, like the framing rows.
+    /// </summary>
+    private void RenderIdleMotionRows(float dt)
+    {
+        ImGuiHelpers.SettingLabel(
+            "Head Sway",
+            "How much the head keeps turning on its own. 0 keeps the head still."
+        );
+
+        var head = (float)_live2d.IdleHeadSway;
+        if (
+            ImGuiHelpers.LabeledSlider(
+                "##idle_head",
+                ref head,
+                0.0f,
+                3.0f,
+                "Still",
+                "Lively",
+                "%.2f",
+                dt
+            )
+        )
+        {
+            _live2d = _live2d with { IdleHeadSway = MathF.Round(head, 3) };
+            _configWriter.Write(_live2d);
+        }
+
+        ImGuiHelpers.SettingLabel(
+            "Body Sway",
+            "How much the shoulders/body lean and bob along with the breathing."
+        );
+
+        var body = (float)_live2d.IdleBodySway;
+        if (
+            ImGuiHelpers.LabeledSlider(
+                "##idle_body",
+                ref body,
+                0.0f,
+                3.0f,
+                "Still",
+                "Lively",
+                "%.2f",
+                dt
+            )
+        )
+        {
+            _live2d = _live2d with { IdleBodySway = MathF.Round(body, 3) };
+            _configWriter.Write(_live2d);
+        }
+
+        ImGuiHelpers.SettingLabel(
+            "Breathing",
+            "Chest rise and fall. Models without a ParamBreath parameter ignore this."
+        );
+
+        var breath = (float)_live2d.IdleBreathSway;
+        if (
+            ImGuiHelpers.LabeledSlider(
+                "##idle_breath",
+                ref breath,
+                0.0f,
+                3.0f,
+                "None",
+                "Deep",
+                "%.2f",
+                dt
+            )
+        )
+        {
+            _live2d = _live2d with { IdleBreathSway = MathF.Round(breath, 3) };
+            _configWriter.Write(_live2d);
+        }
+
+        ImGuiHelpers.SettingLabel(
+            "Motion Speed",
+            "How quickly the idle motion cycles. Lower is calmer, higher is more animated."
+        );
+
+        var speed = (float)_live2d.IdleMotionSpeed;
+        if (
+            ImGuiHelpers.LabeledSlider(
+                "##idle_speed",
+                ref speed,
+                0.2f,
+                3.0f,
+                "Slow",
+                "Fast",
+                "%.2f",
+                dt
+            )
+        )
+        {
+            _live2d = _live2d with { IdleMotionSpeed = MathF.Round(speed, 3) };
+            _configWriter.Write(_live2d);
+        }
+
+        if (ImGuiHelpers.SubtleButton("Reset Motion", IsIdleMotionModified()))
+        {
+            _live2d = _live2d with
+            {
+                IdleHeadSway = 1.0,
+                IdleBodySway = 1.0,
+                IdleBreathSway = 1.0,
+                IdleMotionSpeed = 1.0,
+            };
+            _configWriter.Write(_live2d);
+        }
+
+        ImGuiHelpers.Tooltip("Back to the default idle motion (all 1.00).");
+    }
+
+    private bool IsIdleMotionModified() =>
+        Math.Abs(_live2d.IdleHeadSway - 1.0) > 0.001
+        || Math.Abs(_live2d.IdleBodySway - 1.0) > 0.001
+        || Math.Abs(_live2d.IdleBreathSway - 1.0) > 0.001
+        || Math.Abs(_live2d.IdleMotionSpeed - 1.0) > 0.001;
 
     private void RenderResolutionRow()
     {

@@ -20,6 +20,7 @@ public sealed class VoicePanel(
     VoiceModeSelector modeSelector,
     VoiceCard voiceCard,
     VoiceGallery gallery,
+    DoubaoVoiceIdSection doubaoVoiceId,
     CloneLayerSection cloneLayer,
     AdvancedSection advanced
 ) : IDisposable
@@ -38,6 +39,8 @@ public sealed class VoicePanel(
             ImGui.Spacing();
             gallery.Render(deltaTime, mode);
             ImGui.Spacing();
+            doubaoVoiceId.Render(deltaTime, mode);
+            ImGui.Spacing();
             cloneLayer.Render(deltaTime, mode);
             ImGui.Spacing();
             advanced.Render(deltaTime, mode);
@@ -54,6 +57,7 @@ public sealed class VoicePanel(
         _disposed = true;
         modeSelector.Dispose();
         gallery.Dispose();
+        doubaoVoiceId.Dispose();
         cloneLayer.Dispose();
         advanced.Dispose();
     }

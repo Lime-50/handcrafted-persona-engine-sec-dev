@@ -1,5 +1,14 @@
 namespace PersonaEngine.Lib.Configuration;
 
+public enum DoubaoTtsAuthMode
+{
+    /// <summary>New console: a single API key is sent as X-Api-Key.</summary>
+    ApiKey,
+
+    /// <summary>Legacy console: App ID and Access Key are sent together.</summary>
+    AppIdAccessKey,
+}
+
 /// <summary>
 ///     Configuration for the Doubao (Volcengine) speech synthesis engine.
 ///     Bound to "Config:Tts:Doubao" in appsettings.json.
@@ -12,6 +21,9 @@ namespace PersonaEngine.Lib.Configuration;
 /// </remarks>
 public sealed record DoubaoTtsOptions
 {
+    /// <summary>Authentication scheme used for the TTS HTTP request.</summary>
+    public DoubaoTtsAuthMode AuthMode { get; init; } = DoubaoTtsAuthMode.ApiKey;
+
     /// <summary>New console API key (X-Api-Key). Preferred authentication.</summary>
     public string ApiKey { get; init; } = string.Empty;
 

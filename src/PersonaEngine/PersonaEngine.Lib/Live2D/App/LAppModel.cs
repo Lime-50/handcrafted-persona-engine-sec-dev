@@ -278,6 +278,18 @@ public class LAppModel : CubismUserModel
     public string IdParamBodyAngleX { get; set; }
 
     /// <summary>
+    ///     パラメータID: ParamBodyAngleY
+    /// </summary>
+    public string IdParamBodyAngleY { get; set; } =
+        CubismFramework.CubismIdManager.GetId(CubismDefaultParameterId.ParamBodyAngleY);
+
+    /// <summary>
+    ///     パラメータID: ParamBodyAngleZ
+    /// </summary>
+    public string IdParamBodyAngleZ { get; set; } =
+        CubismFramework.CubismIdManager.GetId(CubismDefaultParameterId.ParamBodyAngleZ);
+
+    /// <summary>
     ///     パラメータID: ParamEyeBallX
     /// </summary>
     public string IdParamEyeBallX { get; set; }
@@ -308,55 +320,51 @@ public class LAppModel : CubismUserModel
         }
     }
 
+    /// <summary>
+    ///     Unscaled amplitude/period of every idle parameter, so the user's live
+    ///     multipliers can be re-applied without rebuilding the breath object.
+    /// </summary>
+    private readonly Dictionary<string, (float Peak, float Cycle)> _idleMotionBaseline = new(
+        StringComparer.Ordinal
+    );
+
     public void LoadBreath()
     {
-        //Breath
-        _breath = new CubismBreath
-        {
-            Parameters =
-            [
-                new BreathParameterData
-                {
-                    ParameterId = IdParamAngleX,
-                    Offset = 0.0f,
-                    Peak = 15.0f,
-                    Cycle = 6.5345f,
-                    Weight = 0.5f,
-                },
-                new BreathParameterData
-                {
-                    ParameterId = IdParamAngleY,
-                    Offset = 0.0f,
-                    Peak = 8.0f,
-                    Cycle = 3.5345f,
-                    Weight = 0.5f,
-                },
-                new BreathParameterData
-                {
-                    ParameterId = IdParamAngleZ,
-                    Offset = 0.0f,
-                    Peak = 10.0f,
-                    Cycle = 5.5345f,
-                    Weight = 0.5f,
-                },
-                new BreathParameterData
-                {
-                    ParameterId = IdParamBodyAngleX,
-                    Offset = 0.0f,
-                    Peak = 4.0f,
-                    Cycle = 15.5345f,
-                    Weight = 0.5f,
-                },
-                new BreathParameterData
-                {
-                    ParameterId = IdParamBreath,
-                    Offset = 0.5f,
-                    Peak = 0.5f,
-                    Cycle = 3.2345f,
-                    Weight = 0.5f,
-                },
-            ],
-        };
+        // Head (ParamAngleX/Y/Z) + body (ParamBodyAngleX/Y/Z) + chest (ParamBreath).
+        // Models that don't define a parameter simply ignore it.
+        var parameters = new List<BreathParameterData>(7);
+
+        AddIdleParameter(parameters, IdParamAngleX, peak: 15.0f, cycle: 6.5345f);
+        AddIdleParameter(parameters, IdParamAngleY, peak: 8.0f, cycle: 3.5345f);
+        AddIdleParameter(parameters, IdParamAngleZ, peak: 10.0f, cycle: 5.5345f);
+        AddIdleParameter(parameters, IdParamBodyAngleX, peak: 4.0f, cycle: 15.5345f);
+        AddIdleParameter(parameters, IdParamBodyAngleY, peak: 3.0f, cycle: 9.5345f);
+        AddIdleParameter(parameters, IdParamBodyAngleZ, peak: 4.0f, cycle: 11.5345f);
+        AddIdleParameter(parameters, IdParamBreath, peak: 0.5f, cycle: 3.2345f, offset: 0.5f);
+
+        _breath = new CubismBreath { Parameters = parameters };
+    }
+
+    private void AddIdleParameter(
+        List<BreathParameterData> target,
+        string parameterId,
+        float peak,
+        float cycle,
+        float offset = 0.0f
+    )
+    {
+        target.Add(
+            new BreathParameterData
+            {
+                ParameterId = parameterId,
+                Offset = offset,
+                Peak = peak,
+                Cycle = cycle,
+                Weight = 0.5f,
+            }
+        );
+
+        _idleMotionBaseline[parameterId] = (peak, cycle);
     }
 
     /// <summary>
@@ -435,7 +443,12 @@ public class LAppModel : CubismUserModel
         }
 
         // 呼吸など
-        // _breath?.UpdateParameters(Model, deltaTimeSeconds);
+        // Drives ParamAngleX/Y/Z (head), ParamBodyAngleX/Y/Z (body) and ParamBreath
+        // (chest) with slow sine waves, so the character keeps moving even when the
+        // model ships no Idle motion group (typical for VTube Studio models, which
+        // rely on face tracking). Values are added on top of motions/expressions, so
+        // it never fights them, and the amplitudes/speed are user-tunable live.
+        UpdateIdleMotion(deltaTimeSeconds);
 
         // 物理演算の設定
         _physics?.Evaluate(Model, deltaTimeSeconds);
@@ -462,6 +475,53 @@ public class LAppModel : CubismUserModel
         _pose?.UpdateParameters(Model, deltaTimeSeconds);
 
         Model.Update();
+    }
+
+    /// <summary>
+    ///     Applies the idle motion (breath) with the user's live amplitude/speed
+    ///     multipliers: head sway, body sway and chest breathing can each be scaled
+    ///     independently from the settings panel.
+    /// </summary>
+    private void UpdateIdleMotion(float deltaTimeSeconds)
+    {
+        if (_breath is null)
+        {
+            return;
+        }
+
+        var idle = _lapp.Live2dManager;
+
+        foreach (var parameter in _breath.Parameters)
+        {
+            if (!_idleMotionBaseline.TryGetValue(parameter.ParameterId, out var baseline))
+            {
+                continue;
+            }
+
+            parameter.Peak = baseline.Peak * IdleAmplitudeScale(parameter.ParameterId, idle);
+            parameter.Cycle = baseline.Cycle;
+        }
+
+        _breath.UpdateParameters(Model, deltaTimeSeconds * MathF.Max(0.0f, idle.IdleMotionSpeed));
+    }
+
+    private float IdleAmplitudeScale(string parameterId, LAppLive2DManager idle)
+    {
+        if (parameterId == IdParamBreath)
+        {
+            return idle.IdleBreathSway;
+        }
+
+        if (
+            parameterId == IdParamBodyAngleX
+            || parameterId == IdParamBodyAngleY
+            || parameterId == IdParamBodyAngleZ
+        )
+        {
+            return idle.IdleBodySway;
+        }
+
+        return idle.IdleHeadSway;
     }
 
     /// <summary>

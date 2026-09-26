@@ -2,6 +2,7 @@
 using PersonaEngine.Lib.Configuration;
 using PersonaEngine.Lib.Core.Conversation.Abstractions.Session;
 using PersonaEngine.Lib.UI;
+using Hexa.NET.ImGui.Widgets.Dialogs;
 using PersonaEngine.Lib.UI.Common;
 using PersonaEngine.Lib.UI.ControlPanel;
 using PersonaEngine.Lib.UI.Host;
@@ -177,6 +178,7 @@ public class AvatarApp : IDisposable
             component.Render((float)deltaTime);
         }
 
+        DialogManager.Draw();
         _imGui.Render();
 
         // Render components to their respective Spout outputs

@@ -47,7 +47,7 @@ public class SubtitleRenderer : IRenderComponent
     ///     started/ended events without relying on record Equals (which breaks when
     ///     audio filters mutate AudioData).
     /// </summary>
-    private readonly ConcurrentDictionary<AudioSegment, Guid> _segmentIdMap = new(
+    private readonly ConcurrentDictionary<AudioSegment, Guid[]> _segmentIdMap = new(
         ReferenceEqualityComparer.Instance
     );
 
@@ -56,10 +56,8 @@ public class SubtitleRenderer : IRenderComponent
     ///     per-sentence segments. Streaming TTS sends many audio chunks per sentence;
     ///     instead of creating a new subtitle segment per chunk, we update the existing one.
     /// </summary>
-    private readonly ConcurrentDictionary<
-        Guid,
-        (Guid SegmentId, SubtitleSegment Segment)
-    > _sentenceSegmentMap = new();
+    private readonly ConcurrentDictionary<Guid, List<SubtitleSegment>> _sentenceSegmentMap =
+        new();
 
     private readonly Channel<SubtitleCommand> _commandChannel =
         Channel.CreateUnbounded<SubtitleCommand>(
@@ -174,7 +172,11 @@ public class SubtitleRenderer : IRenderComponent
         var font = fontSystem.GetFont(_config.FontSize);
 
         _textMeasurer = new TextMeasurer(font, _config.SideMargin, _viewportWidth, _viewportHeight);
-        _subtitleProcessor = new SubtitleProcessor(_textMeasurer, _config.AnimationDuration);
+        _subtitleProcessor = new SubtitleProcessor(
+            _textMeasurer,
+            _config.AnimationDuration,
+            BuildCueOptions(_config)
+        );
         _wordAnimator = new PopAnimator();
 
         _subtitleTimeline = new SubtitleTimeline(
@@ -245,11 +247,26 @@ public class SubtitleRenderer : IRenderComponent
                 _viewportWidth,
                 _viewportHeight
             );
-            _subtitleProcessor = new SubtitleProcessor(_textMeasurer, current.AnimationDuration);
+            _subtitleProcessor = new SubtitleProcessor(
+                _textMeasurer,
+                current.AnimationDuration,
+                BuildCueOptions(current)
+            );
         }
         else if (current.AnimationDuration != prev.AnimationDuration)
         {
             _subtitleProcessor.SetDefaultWordDuration(current.AnimationDuration);
+        }
+
+        var cueOptionsChanged =
+            current.MaxCharsPerCue != prev.MaxCharsPerCue
+            || current.MinCharsPerCue != prev.MinCharsPerCue
+            || Math.Abs(current.MaxCueDurationSeconds - prev.MaxCueDurationSeconds) > 0.001f
+            || Math.Abs(current.CuePauseThresholdSeconds - prev.CuePauseThresholdSeconds) > 0.001f;
+
+        if (cueOptionsChanged)
+        {
+            _subtitleProcessor.SetCueOptions(BuildCueOptions(current));
         }
 
         if (colorsChanged)
@@ -284,6 +301,15 @@ public class SubtitleRenderer : IRenderComponent
 
         _previousConfig = current;
     }
+
+    private static SubtitleCueOptions BuildCueOptions(SubtitleOptions config) =>
+        new()
+        {
+            MaxWeightedCharsPerCue = Math.Max(4, config.MaxCharsPerCue),
+            MinWeightedCharsPerCue = Math.Max(1, config.MinCharsPerCue),
+            MaxDurationPerCueSeconds = Math.Max(0.3f, config.MaxCueDurationSeconds),
+            PauseThresholdSeconds = Math.Max(0.05f, config.CuePauseThresholdSeconds),
+        };
 
     public void Update(float deltaTime)
     {
@@ -438,54 +464,98 @@ public class SubtitleRenderer : IRenderComponent
     {
         var sentenceId = command.AudioSegment.SentenceId;
 
-        // If a segment for this sentence already exists, update it with new timing
+        // If a sentence already has cues, append to the open cue when it still
+        // fits; otherwise split the incoming chunk into new short cues.
         if (
             sentenceId != Guid.Empty
             && _sentenceSegmentMap.TryGetValue(sentenceId, out var existing)
         )
         {
-            // Update existing segment's word timings and add new words.
-            // Must run under the timeline lock because the render thread
-            // iterates the same Words lists during Render/PositionLines.
-            _subtitleTimeline.RunLocked(() =>
-                _subtitleProcessor.UpdateSegment(
-                    existing.Segment,
-                    command.AudioSegment,
-                    existing.Segment.AbsoluteStartTime
-                )
-            );
+            var lastCue = existing.Count > 0 ? existing[^1] : null;
+            if (
+                lastCue is not null
+                && _subtitleProcessor.CanAppendToCue(lastCue, command.AudioSegment)
+            )
+            {
+                // Must run under the timeline lock because the render thread
+                // iterates the same Words lists during Render/PositionLines.
+                _subtitleTimeline.RunLocked(() =>
+                    _subtitleProcessor.UpdateSegment(
+                        lastCue,
+                        command.AudioSegment,
+                        lastCue.AbsoluteStartTime
+                    )
+                );
 
-            _segmentIdMap[command.AudioSegment] = existing.SegmentId;
+                _segmentIdMap[command.AudioSegment] = [lastCue.Id];
+                return;
+            }
+
+            var appendedCues = _subtitleProcessor.ProcessSegmentCues(
+                command.AudioSegment,
+                command.AbsoluteStartTime
+            );
+            var appendedIds = new Guid[appendedCues.Count];
+            for (var i = 0; i < appendedCues.Count; i++)
+            {
+                var cue = appendedCues[i];
+                appendedIds[i] = cue.Id;
+                existing.Add(cue);
+                _subtitleTimeline.AddSegment(cue);
+            }
+
+            _segmentIdMap[command.AudioSegment] = appendedIds;
             return;
         }
 
         // New sentence starting — clean up any previous sentence's persistent segment
         if (sentenceId != Guid.Empty)
         {
-            foreach (var (oldSentenceId, oldEntry) in _sentenceSegmentMap)
+            foreach (var (oldSentenceId, oldCues) in _sentenceSegmentMap)
             {
                 if (oldSentenceId != sentenceId)
                 {
-                    _subtitleTimeline.RemoveSegment(oldEntry.SegmentId);
+                    foreach (var oldCue in oldCues)
+                    {
+                        _subtitleTimeline.RemoveSegment(oldCue.Id);
+                    }
                 }
             }
 
             _sentenceSegmentMap.Clear();
         }
 
-        // First chunk for this sentence: create new segment
-        var processedSegment = _subtitleProcessor.ProcessSegment(
+        // First chunk for this sentence: split it into short cues.
+        var cues = _subtitleProcessor.ProcessSegmentCues(
             command.AudioSegment,
             command.AbsoluteStartTime
         );
 
-        _segmentIdMap[command.AudioSegment] = processedSegment.Id;
-        _subtitleTimeline.AddSegment(processedSegment);
+        if (cues.Count == 0)
+        {
+            var fallback = _subtitleProcessor.ProcessSegment(
+                command.AudioSegment,
+                command.AbsoluteStartTime
+            );
+            if (!string.IsNullOrWhiteSpace(fallback.FullText))
+            {
+                cues = [fallback];
+            }
+        }
+
+        var cueIds = new Guid[cues.Count];
+        for (var i = 0; i < cues.Count; i++)
+        {
+            cueIds[i] = cues[i].Id;
+            _subtitleTimeline.AddSegment(cues[i]);
+        }
+
+        _segmentIdMap[command.AudioSegment] = cueIds;
 
         // Track for future updates from the same sentence
         if (sentenceId != Guid.Empty)
         {
-            _sentenceSegmentMap[sentenceId] = (processedSegment.Id, processedSegment);
+            _sentenceSegmentMap[sentenceId] = cues.ToList();
         }
     }
 
@@ -502,9 +572,12 @@ public class SubtitleRenderer : IRenderComponent
             return;
         }
 
-        if (_segmentIdMap.TryRemove(command.AudioSegment, out var segmentId))
+        if (_segmentIdMap.TryRemove(command.AudioSegment, out var segmentIds))
         {
-            _subtitleTimeline.RemoveSegment(segmentId);
+            foreach (var segmentId in segmentIds)
+            {
+                _subtitleTimeline.RemoveSegment(segmentId);
+            }
         }
     }
 

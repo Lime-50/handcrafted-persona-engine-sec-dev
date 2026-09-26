@@ -17,6 +17,13 @@ namespace PersonaEngine.Lib.TTS.Synthesis.Doubao;
 /// </summary>
 internal sealed class DoubaoSentenceSynthesizer : ISentenceSynthesizer
 {
+    /// <summary>
+    ///     Volcengine result code returned when the request carried nothing pronounceable.
+    ///     Treated as "nothing to say" rather than a failure so one odd fragment cannot
+    ///     abort the whole reply.
+    /// </summary>
+    private const int NoReadableTextCode = 45002001;
+
     private readonly DoubaoApiClient _client;
     private readonly ILogger<DoubaoSentenceSynthesizer> _logger;
     private readonly IOptionsMonitor<DoubaoTtsOptions> _options;
@@ -64,16 +71,36 @@ internal sealed class DoubaoSentenceSynthesizer : ISentenceSynthesizer
         using var audioBuffer = new MemoryStream();
         DoubaoSentence? timing = null;
 
-        await foreach (
-            var evt in _client.SynthesizeAsync(sentence, voice, options, cancellationToken)
-        )
-        {
-            if (evt.Audio is { Length: > 0 } chunk)
-            {
-                audioBuffer.Write(chunk, 0, chunk.Length);
-            }
+        var unreadable = false;
 
-            timing ??= evt.Sentence;
+        try
+        {
+            await foreach (
+                var evt in _client.SynthesizeAsync(sentence, voice, options, cancellationToken)
+            )
+            {
+                if (evt.Audio is { Length: > 0 } chunk)
+                {
+                    audioBuffer.Write(chunk, 0, chunk.Length);
+                }
+
+                timing ??= evt.Sentence;
+            }
+        }
+        catch (DoubaoApiException ex) when (ex.Code == NoReadableTextCode)
+        {
+            unreadable = true;
+            _logger.LogDebug(
+                "Doubao TTS reported no readable text for sentence '{Sentence}'; skipping.",
+                Truncate(sentence)
+            );
+        }
+
+        // yield break must sit outside the try/catch (C# forbids yielding from a try
+        // block that has a catch clause).
+        if (unreadable)
+        {
+            yield break;
         }
 
         if (audioBuffer.Length == 0)
@@ -92,16 +119,38 @@ internal sealed class DoubaoSentenceSynthesizer : ISentenceSynthesizer
 
     private static void ValidateConfiguration(DoubaoTtsOptions options)
     {
-        var hasNewAuth = !string.IsNullOrWhiteSpace(options.ApiKey);
-        var hasLegacyAuth =
-            !string.IsNullOrWhiteSpace(options.AppId)
-            && !string.IsNullOrWhiteSpace(options.AccessKey);
+        var hasAuth = options.AuthMode switch
+        {
+            DoubaoTtsAuthMode.ApiKey => !string.IsNullOrWhiteSpace(options.ApiKey),
+            DoubaoTtsAuthMode.AppIdAccessKey =>
+                !string.IsNullOrWhiteSpace(options.AppId)
+                && !string.IsNullOrWhiteSpace(options.AccessKey),
+            _ => false,
+        };
 
-        if (!hasNewAuth && !hasLegacyAuth)
+        if (!hasAuth)
         {
             throw new InvalidOperationException(
-                "Doubao TTS is not configured: set Config:Tts:Doubao:ApiKey "
-                + "(or the legacy AppId + AccessKey pair) in appsettings.json."
+                "Doubao TTS is not configured for the selected authentication mode. "
+                    + "Set Config:Tts:Doubao:ApiKey or the legacy AppId + AccessKey pair "
+                    + "in appsettings.json."
+            );
+        }
+
+        if (string.IsNullOrWhiteSpace(options.ResourceId))
+        {
+            throw new InvalidOperationException(
+                "Doubao TTS requires a resource ID. "
+                    + "Set Config:Tts:Doubao:ResourceId in appsettings.json."
+            );
+        }
+
+        if (
+            !Uri.TryCreate(options.Endpoint, UriKind.Absolute, out _)
+        )
+        {
+            throw new InvalidOperationException(
+                $"Doubao TTS endpoint '{options.Endpoint}' is not a valid absolute URL."
             );
         }
 

@@ -131,6 +131,17 @@ public sealed class VoiceGallery : IDisposable
 
         var currentVoice = GetCurrentVoice(mode);
 
+        // A voice id entered in Advanced settings (e.g. a purchased or cloned Doubao
+        // voice) has no catalog entry. Surface it as a synthetic tile so the active
+        // selection is visible and stays highlighted in the strip.
+        if (
+            !string.IsNullOrWhiteSpace(currentVoice)
+            && !_filtered.Any(d => string.Equals(d.Id, currentVoice, StringComparison.Ordinal))
+        )
+        {
+            _filtered.Insert(0, VoiceDescriptor.Fallback(engine, currentVoice));
+        }
+
         // Strip height: on the first frame _tileHeight.Height is 0 → use a reasonable
         // default; on subsequent frames use the tracked max tile height + scrollbar.
         var tileH = _tileHeight.Height > 0f ? _tileHeight.Height : TileHeight;
@@ -291,11 +302,14 @@ public sealed class VoiceGallery : IDisposable
         get
         {
             var options = _ttsOptions.CurrentValue.Doubao;
-            return !string.IsNullOrWhiteSpace(options.ApiKey)
-                || (
+            return options.AuthMode switch
+            {
+                DoubaoTtsAuthMode.ApiKey => !string.IsNullOrWhiteSpace(options.ApiKey),
+                DoubaoTtsAuthMode.AppIdAccessKey =>
                     !string.IsNullOrWhiteSpace(options.AppId)
-                    && !string.IsNullOrWhiteSpace(options.AccessKey)
-                );
+                    && !string.IsNullOrWhiteSpace(options.AccessKey),
+                _ => false,
+            };
         }
     }
 }

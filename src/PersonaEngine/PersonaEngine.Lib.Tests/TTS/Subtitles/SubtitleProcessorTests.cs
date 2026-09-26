@@ -185,6 +185,70 @@ public class SubtitleProcessorTests
         Assert.Equal(0.4f, result.Lines[0].Words[0].Duration, 0.001f);
     }
 
+    [Fact]
+    public void ProcessSegmentCues_SplitsLongChineseSentence()
+    {
+        double time = 0;
+        var tokens = new List<Token>();
+        foreach (var part in new[] { "今天", "天气", "很好，", "我们", "一起", "出去玩", "吧。" })
+        {
+            tokens.Add(
+                new Token
+                {
+                    Text = part,
+                    Whitespace = string.Empty,
+                    StartTs = time,
+                    EndTs = time + 0.3,
+                }
+            );
+            time += 0.3;
+        }
+
+        var segment = new AudioSegment(Memory<float>.Empty, 24000, tokens);
+
+        var cues = _processor.ProcessSegmentCues(segment, 5.0f);
+
+        Assert.Equal(2, cues.Count);
+        Assert.Equal("今天天气很好，", cues[0].FullText);
+        Assert.Equal(5.0f, cues[0].Lines[0].Words[0].AbsoluteStartTime, 0.001f);
+        Assert.Equal(5.9f, cues[1].Lines[0].Words[0].AbsoluteStartTime, 0.001f);
+    }
+
+    [Fact]
+    public void CanAppendToCue_RejectsTextAfterCueBoundary()
+    {
+        var cueTokens = new List<Token>
+        {
+            new()
+            {
+                Text = "你好，",
+                Whitespace = string.Empty,
+                StartTs = 0.0,
+                EndTs = 0.3,
+            },
+        };
+        var cue = _processor.ProcessSegmentCues(
+            new AudioSegment(Memory<float>.Empty, 24000, cueTokens),
+            0f
+        )[0];
+        var chunk = new AudioSegment(
+            Memory<float>.Empty,
+            24000,
+            new List<Token>
+            {
+                new()
+                {
+                    Text = "继续",
+                    Whitespace = string.Empty,
+                    StartTs = 0.0,
+                    EndTs = 0.3,
+                },
+            }
+        );
+
+        Assert.False(_processor.CanAppendToCue(cue, chunk));
+    }
+
     private static TextMeasurer CreateTestMeasurer()
     {
         var fontSystem = new FontSystem();

@@ -15,8 +15,12 @@ public partial class SentenceSegmenter(
 {
     private const int MinimumSentences = 2;
 
+    // Any "[...]" span is treated as an opaque control token (e.g. "[Aria]",
+    // "[EMOTION:😄]"). Protecting the whole bracket keeps the pre-processing from
+    // rewriting a ':' inside a tag into a sentence boundary, which would split the
+    // tag and leak the fragment into synthesis.
     private static readonly Regex SpecialTokenPattern = new(
-        @"\[[A-Z]+:[^\]]+\]",
+        @"\[[^\[\]\r\n]{1,64}\]",
         RegexOptions.Compiled
     );
 

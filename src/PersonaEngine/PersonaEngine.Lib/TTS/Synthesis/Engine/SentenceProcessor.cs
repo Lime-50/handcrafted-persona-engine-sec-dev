@@ -62,6 +62,17 @@ public sealed class SentenceProcessor
             _filterResults[i] = filterResult;
         }
 
+        // Control tags (e.g. "[EMOTION:😄]") are stripped by the text filters, which can
+        // leave punctuation-only fragments behind (e.g. "。" or "…"). Those have nothing
+        // to pronounce: cloud engines reject them outright (Doubao answers
+        // "45002001 No readable text!") and local engines would emit silence, so skip.
+        if (!HasSpeakableContent(processedText))
+        {
+            _logger.LogDebug("Skipping segment with no speakable text after filtering.");
+
+            yield break;
+        }
+
         // 2. Phonemize the fully-filtered text (always, unconditionally)
         var phonemeResult = await _phonemizer
             .ToPhonemesAsync(processedText, cancellationToken)
@@ -110,5 +121,23 @@ public sealed class SentenceProcessor
         {
             yield return remaining;
         }
+    }
+
+    /// <summary>
+    ///     True when <paramref name="text" /> contains at least one letter or digit —
+    ///     i.e. something a speech engine can actually pronounce. Punctuation, symbols,
+    ///     whitespace and emoji alone are not speakable.
+    /// </summary>
+    private static bool HasSpeakableContent(string text)
+    {
+        foreach (var c in text)
+        {
+            if (char.IsLetterOrDigit(c))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

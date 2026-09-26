@@ -1,7 +1,10 @@
 using Hexa.NET.ImGui;
 using Microsoft.Extensions.Options;
 using PersonaEngine.Lib.Configuration;
+using PersonaEngine.Lib.Health;
+using PersonaEngine.Lib.TTS.Synthesis.Doubao;
 using PersonaEngine.Lib.UI.ControlPanel.Panels.Shared;
+using PersonaEngine.Lib.UI.ControlPanel.Threading;
 
 namespace PersonaEngine.Lib.UI.ControlPanel.Panels.Voice.Sections;
 
@@ -15,6 +18,8 @@ public sealed class AdvancedSection : IDisposable
     private readonly IOptionsMonitor<TtsConfiguration> _ttsOptions;
     private readonly IOptionsMonitor<RVCFilterOptions> _rvcOptions;
     private readonly IConfigWriter _configWriter;
+    private readonly IDoubaoTtsConnectionProbe _doubaoProbe;
+    private readonly IUiThreadDispatcher _dispatcher;
 
     private KokoroVoiceOptions _kokoro;
     private Qwen3TtsOptions _qwen3;
@@ -23,8 +28,36 @@ public sealed class AdvancedSection : IDisposable
     private readonly IDisposable? _ttsSubscription;
     private readonly IDisposable? _rvcSubscription;
 
+    private DoubaoTtsAuthMode _doubaoAuthMode = DoubaoTtsAuthMode.ApiKey;
+    private string _doubaoAccessKeyBuffer = string.Empty;
     private string _doubaoApiKeyBuffer = string.Empty;
+    private string _doubaoAppIdBuffer = string.Empty;
+    private string _doubaoEndpointBuffer = string.Empty;
+    private bool _doubaoProbeInFlight;
+    private string _doubaoResourceIdBuffer = string.Empty;
+    private string _doubaoVoiceIdBuffer = string.Empty;
+    private DateTimeOffset? _lastDoubaoProbeTime;
+    private bool _doubaoShowAccessKey;
     private bool _doubaoShowKey;
+    private ProbeFooter.State _doubaoProbeFooterState;
+    private SubsystemStatus _doubaoProbeStatus = new(SubsystemHealth.Unknown, "Not tested", null);
+    private float _elapsed;
+
+    private static readonly (string Label, DoubaoTtsAuthMode Value)[] DoubaoAuthModes =
+    [
+        ("API Key (new console)", DoubaoTtsAuthMode.ApiKey),
+        ("App ID + Access Key (legacy)", DoubaoTtsAuthMode.AppIdAccessKey),
+    ];
+
+    private static readonly (string Label, string Value)[] DoubaoResourceIds =
+    [
+        ("TTS 2.0 characters", "seed-tts-2.0"),
+        ("TTS 1.0 characters", "seed-tts-1.0"),
+        ("TTS 1.0 concurrent", "seed-tts-1.0-concurr"),
+        ("Voice clone 2.0", "seed-icl-2.0"),
+        ("Voice clone 1.0", "seed-icl-1.0"),
+        ("Voice clone 1.0 concurrent", "seed-icl-1.0-concurr"),
+    ];
 
     private static readonly string[] DoubaoEmotions =
     [
@@ -51,19 +84,23 @@ public sealed class AdvancedSection : IDisposable
     public AdvancedSection(
         IOptionsMonitor<TtsConfiguration> ttsOptions,
         IOptionsMonitor<RVCFilterOptions> rvcOptions,
-        IConfigWriter configWriter
+        IConfigWriter configWriter,
+        IDoubaoTtsConnectionProbe doubaoProbe,
+        IUiThreadDispatcher dispatcher
     )
     {
         _ttsOptions = ttsOptions;
         _rvcOptions = rvcOptions;
         _configWriter = configWriter;
+        _doubaoProbe = doubaoProbe;
+        _dispatcher = dispatcher;
 
         var current = ttsOptions.CurrentValue;
         _kokoro = current.Kokoro;
         _qwen3 = current.Qwen3;
         _doubao = current.Doubao;
         _rvc = rvcOptions.CurrentValue;
-        _doubaoApiKeyBuffer = current.Doubao.ApiKey;
+        SyncDoubaoTtsBuffers();
 
         _ttsSubscription = ttsOptions.OnChange(
             (updated, _) =>
@@ -71,6 +108,7 @@ public sealed class AdvancedSection : IDisposable
                 _kokoro = updated.Kokoro;
                 _qwen3 = updated.Qwen3;
                 _doubao = updated.Doubao;
+                SyncDoubaoTtsBuffers();
             }
         );
         _rvcSubscription = rvcOptions.OnChange((updated, _) => _rvc = updated);
@@ -84,6 +122,9 @@ public sealed class AdvancedSection : IDisposable
 
     public void Render(float dt, VoiceMode mode)
     {
+        _dispatcher.DrainPending();
+        _elapsed += dt;
+
         if (!_initialized)
         {
             _britishKnob = new AnimatedFloat(_kokoro.UseBritishEnglish ? 1f : 0f);
@@ -326,23 +367,160 @@ public sealed class AdvancedSection : IDisposable
         float rowY;
 
         // API key — the one thing that gates the whole cloud engine.
+        // Auth mode
         rowY = ImGui.GetCursorPosY();
         ImGuiHelpers.SettingLabel(
-            "API Key",
-            "Volcengine Doubao speech API key (new console), or AppId + AccessKey (legacy)."
+            "Auth mode",
+            "Select the credential type from the Volcengine speech console."
         );
-        ApiKeyRow.Render(
-            "##doubao_api_key",
-            ref _doubaoApiKeyBuffer,
-            ref _doubaoShowKey,
-            _doubao.Endpoint,
-            out var nextKey
-        );
-        if (nextKey is not null)
+        var authModeLabel = _doubaoAuthMode == DoubaoTtsAuthMode.ApiKey
+            ? DoubaoAuthModes[0].Label
+            : DoubaoAuthModes[1].Label;
+        if (ImGui.BeginCombo("##doubao_tts_auth_mode", authModeLabel))
         {
-            _doubao = _doubao with { ApiKey = nextKey };
-            _configWriter.Write(_doubao);
+            foreach (var (label, value) in DoubaoAuthModes)
+            {
+                if (ImGui.Selectable(label, _doubaoAuthMode == value))
+                {
+                    _doubaoAuthMode = value;
+                    CommitDoubao();
+                }
+            }
+
+            ImGui.EndCombo();
         }
+
+        ImGuiHelpers.SettingEndRow(rowY);
+
+        if (_doubaoAuthMode == DoubaoTtsAuthMode.ApiKey)
+        {
+            rowY = ImGui.GetCursorPosY();
+            ImGuiHelpers.SettingLabel(
+                "API Key",
+                "New-console API key sent as X-Api-Key."
+            );
+            ApiKeyRow.Render(
+                "DoubaoTtsApiKey",
+                ref _doubaoApiKeyBuffer,
+                ref _doubaoShowKey,
+                _doubaoEndpointBuffer,
+                out var nextKey
+            );
+            if (nextKey is not null)
+            {
+                CommitDoubao();
+            }
+
+            ImGuiHelpers.SettingEndRow(rowY);
+        }
+        else
+        {
+            rowY = ImGui.GetCursorPosY();
+            ImGuiHelpers.SettingLabel(
+                "App ID",
+                "Legacy-console App ID sent as X-Api-App-Id."
+            );
+            if (ImGui.InputText("##doubao_tts_app_id", ref _doubaoAppIdBuffer, 256))
+            {
+                CommitDoubao();
+            }
+
+            ImGuiHelpers.SettingEndRow(rowY);
+
+            rowY = ImGui.GetCursorPosY();
+            ImGuiHelpers.SettingLabel(
+                "Access Key",
+                "Legacy-console Access Key sent as X-Api-Access-Key."
+            );
+            ApiKeyRow.Render(
+                "DoubaoTtsAccessKey",
+                ref _doubaoAccessKeyBuffer,
+                ref _doubaoShowAccessKey,
+                _doubaoEndpointBuffer,
+                out var nextAccessKey
+            );
+            if (nextAccessKey is not null)
+            {
+                CommitDoubao();
+            }
+
+            ImGuiHelpers.SettingEndRow(rowY);
+        }
+
+        // Resource ID
+        rowY = ImGui.GetCursorPosY();
+        ImGuiHelpers.SettingLabel(
+            "Resource ID",
+            "Purchased TTS product. It must match the selected voice family."
+        );
+        var currentResource = string.IsNullOrWhiteSpace(_doubaoResourceIdBuffer)
+            ? "seed-tts-2.0"
+            : _doubaoResourceIdBuffer;
+        var resourceLabel = currentResource;
+        foreach (var (label, value) in DoubaoResourceIds)
+        {
+            if (string.Equals(value, currentResource, StringComparison.OrdinalIgnoreCase))
+            {
+                resourceLabel = label;
+                break;
+            }
+        }
+
+        if (ImGui.BeginCombo("##doubao_tts_resource_id", resourceLabel))
+        {
+            foreach (var (label, value) in DoubaoResourceIds)
+            {
+                if (
+                    ImGui.Selectable(
+                        $"{label} ({value})",
+                        string.Equals(value, currentResource, StringComparison.OrdinalIgnoreCase)
+                    )
+                )
+                {
+                    _doubaoResourceIdBuffer = value;
+                    CommitDoubao();
+                }
+            }
+
+            ImGui.EndCombo();
+        }
+
+        ImGuiHelpers.SettingEndRow(rowY);
+
+        // Voice ID (speaker) 鈥?free-form so purchased / cloned voices can be used even
+        // when they are not in the bundled voice catalog. The Voice panel gallery writes
+        // this same field, so the two stay in sync.
+        rowY = ImGui.GetCursorPosY();
+        ImGuiHelpers.SettingLabel(
+            "Voice ID",
+            "音色 ID sent as \"speaker\" — e.g. zh_female_shuangkuaisisi_uranus_bigtts, "
+                + "or the S_... id of a cloned voice from the Volcengine console."
+        );
+        if (ImGui.InputText("##doubao_tts_voice_id", ref _doubaoVoiceIdBuffer, 256))
+        {
+            CommitDoubao();
+        }
+
+        if (string.IsNullOrWhiteSpace(_doubaoVoiceIdBuffer))
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, Theme.TextSecondary);
+            ImGui.TextUnformatted($"Blank — using the gallery voice: {_doubao.DefaultVoice}");
+            ImGui.PopStyleColor();
+        }
+
+        ImGuiHelpers.SettingEndRow(rowY);
+
+        // Endpoint
+        rowY = ImGui.GetCursorPosY();
+        ImGuiHelpers.SettingLabel(
+            "Endpoint",
+            "TTS SSE endpoint. Override only when using a proxy or gateway."
+        );
+        if (ImGui.InputText("##doubao_tts_endpoint", ref _doubaoEndpointBuffer, 512))
+        {
+            CommitDoubao();
+        }
+
         ImGuiHelpers.SettingEndRow(rowY);
 
         // Speech rate
@@ -415,6 +593,117 @@ public sealed class AdvancedSection : IDisposable
         }
         ImGuiHelpers.HandCursorOnHover();
         ImGuiHelpers.SettingEndRow(rowY);
+
+        ImGui.Spacing();
+        RenderDoubaoProbe(dt);
+    }
+
+    private void RenderDoubaoProbe(float dt)
+    {
+        var rowY = ImGui.GetCursorPosY();
+        ImGuiHelpers.SettingLabel(
+            "Connection",
+            "Sends a short test phrase to validate credentials, resource ID, and voice."
+        );
+        SubsystemStatusChip.Render(_doubaoProbeStatus, _elapsed);
+        ImGuiHelpers.SettingEndRow(rowY);
+
+        if (
+            _doubaoProbeStatus.Health == SubsystemHealth.Failed
+            && !string.IsNullOrWhiteSpace(_doubaoProbeStatus.Detail)
+        )
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, Theme.Error);
+            ImGui.TextWrapped(_doubaoProbeStatus.Detail);
+            ImGui.PopStyleColor();
+        }
+
+        ImGui.Spacing();
+        ProbeFooter.Render(
+            ref _doubaoProbeFooterState,
+            _lastDoubaoProbeTime,
+            _doubaoProbeInFlight,
+            dt,
+            () => _ = RunDoubaoProbeAsync()
+        );
+    }
+
+    private async Task RunDoubaoProbeAsync()
+    {
+        if (_doubaoProbeInFlight)
+        {
+            return;
+        }
+
+        _doubaoProbeInFlight = true;
+        _doubaoProbeStatus = new SubsystemStatus(
+            SubsystemHealth.Degraded,
+            "Testing...",
+            null
+        );
+
+        var snapshot = BuildDoubaoSettings();
+
+        try
+        {
+            var result = await _doubaoProbe.ProbeAsync(snapshot);
+            _dispatcher.Post(
+                () =>
+                {
+                    _doubaoProbeStatus = result;
+                    _lastDoubaoProbeTime = DateTimeOffset.UtcNow;
+                    _doubaoProbeInFlight = false;
+                }
+            );
+        }
+        catch (Exception ex)
+        {
+            _dispatcher.Post(
+                () =>
+                {
+                    _doubaoProbeStatus = new SubsystemStatus(
+                        SubsystemHealth.Failed,
+                        "Probe failed",
+                        ex.Message
+                    );
+                    _lastDoubaoProbeTime = DateTimeOffset.UtcNow;
+                    _doubaoProbeInFlight = false;
+                }
+            );
+        }
+    }
+
+    private void CommitDoubao()
+    {
+        _doubao = BuildDoubaoSettings();
+        _configWriter.Write(_doubao);
+    }
+
+    private DoubaoTtsOptions BuildDoubaoSettings() =>
+        _doubao with
+        {
+            AuthMode = _doubaoAuthMode,
+            ApiKey = _doubaoApiKeyBuffer,
+            AppId = _doubaoAppIdBuffer,
+            AccessKey = _doubaoAccessKeyBuffer,
+            ResourceId = _doubaoResourceIdBuffer,
+            Endpoint = _doubaoEndpointBuffer,
+            // A blank field keeps the previously selected voice (gallery selection)
+            // instead of sending an empty speaker id to the API.
+            DefaultVoice = string.IsNullOrWhiteSpace(_doubaoVoiceIdBuffer)
+                ? _doubao.DefaultVoice
+                : _doubaoVoiceIdBuffer.Trim(),
+        };
+
+    private void SyncDoubaoTtsBuffers()
+    {
+        _doubaoAuthMode = _doubao.AuthMode;
+        _doubaoApiKeyBuffer = _doubao.ApiKey ?? string.Empty;
+        _doubaoAppIdBuffer = _doubao.AppId ?? string.Empty;
+        _doubaoAccessKeyBuffer = _doubao.AccessKey ?? string.Empty;
+        _doubaoResourceIdBuffer = _doubao.ResourceId ?? string.Empty;
+        _doubaoVoiceIdBuffer = _doubao.DefaultVoice ?? string.Empty;
+        _doubaoEndpointBuffer = _doubao.Endpoint ?? string.Empty;
     }
 
     private void RenderRvcSettings()

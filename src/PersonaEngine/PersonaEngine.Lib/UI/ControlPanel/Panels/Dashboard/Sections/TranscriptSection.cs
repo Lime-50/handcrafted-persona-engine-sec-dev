@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Hexa.NET.ImGui;
 using OpenAI.Chat;
 using PersonaEngine.Lib.Core.Conversation.Abstractions.Context;
@@ -10,7 +11,7 @@ namespace PersonaEngine.Lib.UI.ControlPanel.Panels.Dashboard.Sections;
 /// <summary>
 ///     Scrolling conversation transcript showing history and pending (in-progress) turns.
 /// </summary>
-public sealed class TranscriptSection(IConversationOrchestrator orchestrator)
+public sealed partial class TranscriptSection(IConversationOrchestrator orchestrator)
 {
     public void Render(float dt)
     {
@@ -64,10 +65,36 @@ public sealed class TranscriptSection(IConversationOrchestrator orchestrator)
 
         ImGui.SameLine(0f, 6f);
 
+        // Control tags such as "[Aria]" / "[EMOTION:😄]" drive speech and Live2D but are
+        // never spoken, so they are hidden from the readable transcript.
+        var displayText =
+            message.Role == ChatMessageRole.Assistant
+                ? StripControlTags(message.Text)
+                : message.Text;
+
         ImGui.PushTextWrapPos(0f);
-        ImGui.TextUnformatted(message.Text);
+        ImGui.TextUnformatted(displayText);
         ImGui.PopTextWrapPos();
 
         ImGui.Spacing();
     }
+
+    private static string StripControlTags(string text)
+    {
+        if (string.IsNullOrEmpty(text) || !text.Contains('['))
+        {
+            return text;
+        }
+
+        var stripped = BracketTagRegex().Replace(text, string.Empty);
+        stripped = SpaceRunRegex().Replace(stripped, " ");
+
+        return stripped.Trim();
+    }
+
+    [GeneratedRegex(@"\[[^\[\]\r\n]{1,64}\]")]
+    private static partial Regex BracketTagRegex();
+
+    [GeneratedRegex(@"[ \t]{2,}")]
+    private static partial Regex SpaceRunRegex();
 }

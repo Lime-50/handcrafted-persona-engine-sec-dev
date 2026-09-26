@@ -15,7 +15,7 @@ public partial class EmotionProcessor(IEmotionService emotionService, ILoggerFac
     private const string EmotionsKey = "Emotions";
     private const string CursorKey = "EmotionCursor";
 
-    [GeneratedRegex(@"\[EMOTION:(.*?)\]")]
+    [GeneratedRegex(@"\[EMOTION:(.*?)\]", RegexOptions.IgnoreCase)]
     private static partial Regex EmotionTagRegex();
 
     private readonly ILogger<EmotionProcessor> _logger =
@@ -57,18 +57,26 @@ public partial class EmotionProcessor(IEmotionService emotionService, ILoggerFac
             cancellationToken.ThrowIfCancellationRequested();
 
             var emotionValue = match.Groups[1].Value;
+
+            // Character offset in the clean text where this tag was removed.
+            var charOffset = match.Index - offsetAdjustment;
+
+            // Always strip the tag — including malformed/empty ones such as "[EMOTION:]" —
+            // otherwise the raw marker leaks into speech and subtitles.
+            cleanText = cleanText.Remove(charOffset, match.Length);
+            offsetAdjustment += match.Length;
+
             if (string.IsNullOrWhiteSpace(emotionValue))
             {
-                _logger.LogWarning("Empty emotion tag at index {Index}, skipping.", match.Index);
+                _logger.LogWarning(
+                    "Empty emotion tag at index {Index}; removed without mapping.",
+                    match.Index
+                );
+
                 continue;
             }
 
-            // Character offset in the clean text where this tag was removed
-            var charOffset = match.Index - offsetAdjustment;
             emotions.Add(new EmotionCharMapping(charOffset, emotionValue));
-
-            cleanText = cleanText.Remove(charOffset, match.Length);
-            offsetAdjustment += match.Length;
 
             _logger.LogTrace(
                 "Stripped emotion '{Emotion}' at char offset {Offset}.",

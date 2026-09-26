@@ -1,6 +1,7 @@
 using Hexa.NET.ImGui;
 using Microsoft.Extensions.Options;
 using PersonaEngine.Lib.Core.Conversation.Abstractions.Configuration;
+using PersonaEngine.Lib.Core.Conversation.Abstractions.Session;
 using PersonaEngine.Lib.UI.ControlPanel.Layout;
 
 namespace PersonaEngine.Lib.UI.ControlPanel.Panels.Personality.Sections;
@@ -14,6 +15,7 @@ public sealed class CurrentVibeSection : IDisposable
     private const int VibeBufferSize = 4096;
 
     private readonly IConfigWriter _configWriter;
+    private readonly IConversationOrchestrator _orchestrator;
     private readonly IDisposable? _changeSubscription;
 
     private ConversationContextOptions _opts;
@@ -22,10 +24,12 @@ public sealed class CurrentVibeSection : IDisposable
 
     public CurrentVibeSection(
         IOptionsMonitor<ConversationContextOptions> monitor,
-        IConfigWriter configWriter
+        IConfigWriter configWriter,
+        IConversationOrchestrator orchestrator
     )
     {
         _configWriter = configWriter;
+        _orchestrator = orchestrator;
         _opts = monitor.CurrentValue;
         _changeSubscription = monitor.OnChange(
             (updated, _) =>
@@ -75,6 +79,27 @@ public sealed class CurrentVibeSection : IDisposable
                 _opts = _opts with { CurrentContext = _vibeBuffer };
                 _configWriter.Write(_opts);
             }
+
+            // Clear action: drops both the persisted vibe text and the runtime
+            // conversation history for every active session.
+            ImGui.Spacing();
+            if (ImGuiHelpers.DangerButton("Clear Context"))
+            {
+                ClearContext();
+            }
+
+            ImGuiHelpers.Tooltip(
+                "Clear the current vibe and all conversation history for active sessions"
+            );
         }
+    }
+
+    private void ClearContext()
+    {
+        _vibeBuffer = string.Empty;
+        _opts = _opts with { CurrentContext = string.Empty };
+        _configWriter.Write(_opts);
+
+        _ = _orchestrator.ClearAllContextsAsync();
     }
 }
